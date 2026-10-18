@@ -42,7 +42,7 @@ cmake --preset server-tracing
 cmake --build build-server-tracing
 ```
 
-This requires the Perfetto amalgamated SDK installed where CMake looks for it (`/usr/share/perfetto/sdk/perfetto.{h,cc}`, override with `-DPERFETTO_SDK_DIR=<dir>`). Tracing is gated at runtime by the `WIVRN_TRACING` env var, so a tracing-enabled build has no cost until you set it.
+This requires the Perfetto amalgamated SDK installed where CMake looks for it (`/usr/share/perfetto/sdk/perfetto.{h,cc}`, override with `-DPERFETTO_SDK_DIR=<dir>` or the `PERFETTO_SDK_DIR` environment variable). With Nix, `nix develop --no-pure-eval .#tracing` provides the SDK (pinned to the CI version) and keeps the host toolchain. Tracing is gated at runtime by the `WIVRN_TRACING` env var, so a tracing-enabled build has no cost until you set it.
 
 To also instrument Monado under the same switch, use the `server-tracing-monado` preset (adds `WIVRN_TRACE_MONADO=ON`); this requires [percetto](https://github.com/olvaffe/percetto/) to be discoverable at configure time.
 

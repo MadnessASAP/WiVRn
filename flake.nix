@@ -44,6 +44,8 @@
             pkgs.util-linux
           ];
 
+          perfetto-sdk = pkgs.callPackage ./nix/perfetto-sdk.nix { };
+
           package = pkgs.enableDebugging (
             pkgs.wivrn.overrideAttrs (
               finalAttrs: oldAttrs: {
@@ -107,6 +109,7 @@
 
           packages = {
             default = package;
+            inherit perfetto-sdk;
             dissector = package.overrideAttrs (oldAttrs: {
               pname = "wivrn-dissector";
               cmakeFlags = (lib.filter (flag: !(lib.hasPrefix "-DWIVRN_BUILD" flag)) oldAttrs.cmakeFlags) ++ [
@@ -139,9 +142,21 @@
             ];
           };
 
+          # Perfetto SDK for the server-tracing presets, host toolchain:
+          # nix develop --no-pure-eval .#tracing
+          legacyPackages.tracing = inputs.devenv.lib.mkShell {
+            inherit inputs pkgs;
+            modules = [
+              inputs.devenv.flakeModules.readDevenvRoot
+              { _module.args = { inherit perfetto-sdk; }; }
+              ./nix/tracing.nix
+            ];
+          };
+
           devShells.default = package.overrideAttrs (oldAttrs: {
             buildInputs = oldAttrs.buildInputs ++ devBuildInputs;
             nativeBuildInputs = oldAttrs.nativeBuildInputs ++ devTools;
+            PERFETTO_SDK_DIR = "${perfetto-sdk}/share/perfetto/sdk";
           });
         };
     };
