@@ -706,6 +706,9 @@ void compositor::encoder_work(std::stop_token tok)
 			{
 				if (encoder->stream_idx < 2)
 					encoder->encode(session, image.view_info, image.frame_index, [&]() -> std::optional<std::vector<uint8_t>> {
+						if (not fs_capture.has_data(req, encoder->stream_idx))
+							return std::nullopt;
+
 						// The capture buffer is written by the compositor submission,
 						// which may still be running
 						if (vk.device.waitSemaphores(

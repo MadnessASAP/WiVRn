@@ -111,6 +111,13 @@ public:
 
 	void clear(size_t slot_index);
 
+	// Whether record() captured data for this view of the slot
+	bool has_data(size_t slot_index, size_t view_index) const
+	{
+		const auto & views = slots.at(slot_index).views;
+		return view_index < views.size() and views[view_index];
+	}
+
 	// After the GPU work recorded by record() completed, filter, compress
 	// and serialize the data of a view. Returns nullopt if there is no data
 	// or it exceeds the size limit.
