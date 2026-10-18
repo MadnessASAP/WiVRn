@@ -33,6 +33,7 @@ Build-Depends:
  libwayland-dev,
  libx11-xcb-dev,
  libx264-dev,
+ libzstd-dev,
  libxcb-randr0-dev,
  libxrandr-dev,
  mesa-common-dev,

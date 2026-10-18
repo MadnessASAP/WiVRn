@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include "frame_synthesis_decoder.h"
 #include "wivrn_packets.h"
 
 #include "wivrn_config.h"
@@ -53,6 +54,9 @@ public:
 		// transfers between Vulkan and external engine
 		uint32_t foreign_queue_family = vk::QueueFamilyIgnored;
 #endif
+		// XR_EXT_frame_synthesis images received with this frame, if any.
+		// Attached by the stream scene, may still be pending.
+		std::shared_ptr<frame_synthesis_decoder::frame> frame_synthesis;
 	};
 
 public:

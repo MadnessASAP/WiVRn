@@ -404,6 +404,16 @@ void settings_streaming(const settings_context & ctx)
 	        .default_int = int(default_config.bitrate_bps / mb),
 	});
 
+	list.push_back({
+	        .id = "##frame_synthesis",
+	        .label = _C("setting name", "Receive depth and motion vectors"),
+	        .description = _("Experimental: also receive the depth and motion vector images of applications that provide them (XR_EXT_frame_synthesis). Requires H.264 or H.265 and uses additional bandwidth."),
+	        .ui = ui_kind::toggle,
+	        .get_bool = [&config] { return config.frame_synthesis; },
+	        .set_bool = [&ctx, &config](bool v) { config.frame_synthesis = v; config.save(); if (ctx.on_streaming_changed) ctx.on_streaming_changed(); },
+	        .default_bool = default_config.frame_synthesis,
+	});
+
 	// in-stream: steer where foveation focuses quality
 	if (ctx.in_game)
 	{

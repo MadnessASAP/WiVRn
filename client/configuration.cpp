@@ -340,6 +340,7 @@ const std::vector<config_field> & configuration::config_fields()
 	        scalar("locale", &configuration::locale),
 	        scalar("environment_model", &configuration::environment_model),
 	        scalar("high_power_mode", &configuration::high_power_mode),
+	        scalar("frame_synthesis", &configuration::frame_synthesis),
 	        scalar("fps_divider", &configuration::fps_divider),
 	        scalar("extended_config", &configuration::extended_config),
 	        scalar("preferred_refresh_rate", &configuration::preferred_refresh_rate),

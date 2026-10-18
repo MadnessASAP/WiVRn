@@ -145,6 +145,35 @@ no permission and is always available. Only the digested controller state is for
 (buttons, two sticks, analog triggers and a d-pad), so device specific features such as gyro,
 adaptive triggers or the touchpad are not available.
 
+## `frame-synthesis`
+Default value: `true`
+
+Experimental. Controls the transmission of the depth and motion vector images that applications
+submit with `XR_EXT_frame_synthesis`. They are only sent when the headset enabled
+"Receive depth and motion vectors", the stream uses H.264 or H.265, and the application submits a
+single projection layer. See [the transport specification](./frame_synthesis_transport.md).
+
+Either a boolean, or an object with the following keys:
+
+* `enabled`: `true` or `false`.
+* `scale`: size of the transmitted images relative to the application images, between `0.25`
+  and `1`, default `0.5`.
+* `depth-16bit`: transmit depth as 16-bit floating point values instead of 32-bit,
+  default `false`.
+* `compression-level`: zstd compression level, default `1`.
+* `max-view-kib`: maximum size of the compressed data of one eye, larger frames are not sent,
+  default `2048`.
+
+### Example
+```json
+{
+	"frame-synthesis": {
+		"scale": 0.5,
+		"depth-16bit": true
+	}
+}
+```
+
 ## `debug-gui`
 Default value: `false`
 

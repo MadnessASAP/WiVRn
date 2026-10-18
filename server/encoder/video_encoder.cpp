@@ -23,6 +23,7 @@
 #include "video_encoder.h"
 
 #include "encoder_settings.h"
+#include "frame_synthesis/annexb_sei.h"
 #include "os/os_time.h"
 #include "utils/wivrn_trace.h"
 #include "wivrn_config.h"
@@ -193,6 +194,7 @@ video_encoder::video_encoder(vk_bundle & vk,
                              std::unique_ptr<idr_handler> idr,
                              bool async_send) :
         stream_idx(stream_idx),
+        codec(settings.codec),
         target_queue(target_queue),
         need_transfer(not vk.optimal_transfer(vk.queue.family_index, target_queue)),
         bitrate_multiplier(settings.bitrate_multiplier),
@@ -250,7 +252,8 @@ void video_encoder::present_image(vk::Image y_cbcr, vk::SemaphoreSubmitInfo info
 
 void video_encoder::encode(wivrn_session & cnx,
                            const to_headset::video_stream_data_shard::view_info_t & view_info,
-                           uint64_t frame_index)
+                           uint64_t frame_index,
+                           const aux_data_provider & aux)
 {
 	encode_slot = (encode_slot + 1) % num_slots;
 
@@ -286,6 +289,9 @@ void video_encoder::encode(wivrn_session & cnx,
 	shard.view_info = view_info;
 	shard.timing_info.reset();
 
+	if (aux)
+		send_aux_data(aux);
+
 	auto data = encode(encode_slot, frame_index);
 	if (data)
 	{
@@ -293,6 +299,34 @@ void video_encoder::encode(wivrn_session & cnx,
 		assert(shared_sender);
 		shared_sender->push(std::move(*data));
 	}
+}
+
+void video_encoder::send_aux_data(const aux_data_provider & aux)
+{
+	if (not frame_synthesis::supports_sei(codec))
+		return;
+
+	// Auxiliary data must never prevent the colour frame from being encoded
+	std::vector<std::vector<uint8_t>> nals;
+	try
+	{
+		auto blob = aux();
+		if (not blob)
+			return;
+		nals = frame_synthesis::make_sei_nals(codec, *blob);
+	}
+	catch (std::exception & e)
+	{
+		U_LOG_W("Frame synthesis data dropped: %s", e.what());
+		return;
+	}
+
+	// Each SEI NAL unit is sent with its own SendData call, so that it starts
+	// on a shard boundary. It is sent synchronously, before the coded picture,
+	// so that it precedes the VCL NAL units of the access unit.
+	wivrn::trace::scope trace(wivrn::trace::cpu_track::encoder, stream_idx, shard.frame_idx, "send frame synthesis data");
+	for (auto & nal: nals)
+		SendData(nal, false);
 }
 
 void video_encoder::SendData(std::span<uint8_t> data, bool end_of_frame, bool control)

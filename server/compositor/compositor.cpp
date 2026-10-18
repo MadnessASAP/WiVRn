@@ -33,6 +33,7 @@
 
 #include "driver/wivrn_session.h"
 #include "encoder/video_encoder.h"
+#include "frame_synthesis/annexb_sei.h"
 #include "inplace_vector.hpp"
 #include "utils/method.h"
 #include "utils/wivrn_trace.h"
@@ -331,7 +332,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	cmd_pool.reset();
 	cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
-	cmd.resetQueryPool(*query_pool, 0, 3);
+	cmd.resetQueryPool(*query_pool, 0, 4);
 	cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, *query_pool, 0);
 
 	bool flip_y = false;
@@ -340,6 +341,9 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	std::array<xrt_fov, 2> src_fov;
 
 	beman::inplace_vector::inplace_vector<vk::ImageMemoryBarrier2, 3> image_barriers;
+
+	// Projection layer that may carry XR_EXT_frame_synthesis data
+	const comp_layer * frame_synthesis_layer = nullptr;
 
 	// Check if we can pass a layer directly to foveation
 	if (layer_accum.layer_count == 1 and
@@ -360,6 +364,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 			view_info.pose[view] = xrt_cast(data.pose);
 			view_info.fov[view] = xrt_cast(data.fov);
 		}
+		frame_synthesis_layer = &layer;
 	}
 	else
 	{
@@ -438,6 +443,10 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	        src_fov,
 	        view_info.alpha);
 
+	cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, *query_pool, 2);
+
+	record_frame_synthesis(i, frame_synthesis_layer);
+
 	for (auto & encoder: encoders)
 	{
 		if (encoder->stream_idx == 2 and not view_info.alpha)
@@ -476,7 +485,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	        .imageMemoryBarrierCount = uint32_t(image_barriers.size()),
 	        .pImageMemoryBarriers = image_barriers.data(),
 	});
-	cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, *query_pool, 2);
+	cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, *query_pool, 3);
 
 	cmd.end();
 
@@ -512,6 +521,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 		        info.frame_id);
 	}
 
+	images[i].gpu_done = sem_info.value;
 	[[maybe_unused]] auto j = encode_request.exchange(i);
 	encode_request.notify_all();
 	assert(j == -1);
@@ -536,8 +546,8 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	{
 		auto [res, ts] = query_pool.getResults<uint64_t>(
 		        0,
-		        3,
-		        3 * sizeof(uint64_t),
+		        4,
+		        4 * sizeof(uint64_t),
 		        sizeof(uint64_t),
 		        vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
 
@@ -546,6 +556,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 			static const auto period = vk.physical_device.getProperties().limits.timestampPeriod;
 			squasher_times.add((ts[1] - ts[0]) * period / 1e3);
 			foveation_times.add((ts[2] - ts[1]) * period / 1e3);
+			frame_synthesis_times.add((ts[3] - ts[2]) * period / 1e3);
 		}
 	}
 
@@ -622,6 +633,34 @@ xrt_result_t compositor::get_view_config(
 	return XRT_ERROR_UNSUPPORTED_VIEW_TYPE;
 }
 
+void compositor::record_frame_synthesis(int image_index, const comp_layer * layer)
+{
+	fs_capture.clear(image_index);
+
+	if (not fs_capture.enabled())
+		return;
+
+	if (not layer or not layer->has_frame_synthesis)
+	{
+		// The data is only transmitted for single projection layer frames
+		if (std::ranges::any_of(std::span(layer_accum.layers, layer_accum.layer_count), &comp_layer::has_frame_synthesis))
+			++fs_capture.stats.rejected_frames;
+		return;
+	}
+
+	const auto & info = session.get_info();
+	if (info.frame_synthesis_format != frame_synthesis::format_hash() or not session.get_settings()->frame_synthesis)
+		return;
+
+	if (not frame_synthesis::supports_sei(settings[0].codec) or not frame_synthesis::supports_sei(settings[1].codec))
+		return;
+
+	const auto & foveation_params = images[image_index].view_info.foveation;
+	const bool foveated = std::ranges::any_of(foveation_params, [](const auto & p) { return p.x.size() > 1 or p.y.size() > 1; });
+
+	fs_capture.record(cmd, image_index, *layer, images[image_index].frame_index, images[image_index].view_info.display_time, foveated);
+}
+
 std::vector<compositor::layer_id> compositor::get_layer_ids() const
 {
 	std::vector<layer_id> layers;
@@ -665,7 +704,21 @@ void compositor::encoder_work(std::stop_token tok)
 		{
 			for (auto & encoder: encoders)
 			{
-				if (encoder->stream_idx < 2 or image.view_info.alpha)
+				if (encoder->stream_idx < 2)
+					encoder->encode(session, image.view_info, image.frame_index, [&]() -> std::optional<std::vector<uint8_t>> {
+						// The capture buffer is written by the compositor submission,
+						// which may still be running
+						if (vk.device.waitSemaphores(
+						            vk::SemaphoreWaitInfo{
+						                    .semaphoreCount = 1,
+						                    .pSemaphores = &*sem,
+						                    .pValues = &image.gpu_done,
+						            },
+						            U_TIME_1S_IN_NS) != vk::Result::eSuccess)
+							return std::nullopt;
+						return fs_capture.serialize(req, encoder->stream_idx);
+					});
+				else if (image.view_info.alpha)
 					encoder->encode(session, image.view_info, image.frame_index);
 			}
 		}
@@ -717,7 +770,7 @@ compositor::compositor(wivrn_session & session) :
                             }),
         query_pool(vk.device, vk::QueryPoolCreateInfo{
                                       .queryType = vk::QueryType::eTimestamp,
-                                      .queryCount = 3,
+                                      .queryCount = 4,
                               }),
         settings(get_encoder_settings(vk, session)),
         images{make_images(vk, cmd_pool, settings)},
@@ -726,7 +779,8 @@ compositor::compositor(wivrn_session & session) :
         frame_rate(settings[0].fps),
         pacer(U_TIME_1S_IN_NS / frame_rate),
         squasher(vk, render_extent(session.get_info())),
-        foveation(vk, images[0].image.info().extent)
+        foveation(vk, images[0].image.info().extent),
+        fs_capture(vk, frame_synthesis_settings_from_config(), images.size())
 {
 	comp_base * c_base = this;
 	// Ensure we can safely cast pointers
@@ -787,6 +841,7 @@ compositor::compositor(wivrn_session & session) :
 	u_var_add_root(this, "Compositor", false);
 	u_var_add_f32_timing(this, &squasher_times.var, "layers processing");
 	u_var_add_f32_timing(this, &foveation_times.var, "foveation");
+	u_var_add_f32_timing(this, &frame_synthesis_times.var, "frame synthesis capture");
 
 	// Start the thread after everything is initialized
 	encoder_thread = std::jthread{[&](std::stop_token t) { encoder_work(t); }};

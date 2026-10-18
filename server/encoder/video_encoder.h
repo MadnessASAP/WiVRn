@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <deque>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -76,6 +77,7 @@ private:
 
 public:
 	const uint8_t stream_idx;
+	const video_codec codec;
 	const uint32_t target_queue;
 	const bool need_transfer;
 	// Layout the encoder needs y_cbcr to arrive in. Set during construction
@@ -136,9 +138,14 @@ public:
 	void set_bitrate(uint32_t bitrate_bps);
 	void set_framerate(float framerate);
 
+	// Produces the XR_EXT_frame_synthesis auxiliary data blob of the frame,
+	// only called when the frame is actually encoded
+	using aux_data_provider = std::function<std::optional<std::vector<uint8_t>>()>;
+
 	void encode(wivrn_session & cnx,
 	            const to_headset::video_stream_data_shard::view_info_t & view_info,
-	            uint64_t frame_index);
+	            uint64_t frame_index,
+	            const aux_data_provider & aux = {});
 
 protected:
 	// called on present to submit command buffers for the image.
@@ -151,6 +158,9 @@ protected:
 	virtual std::optional<data> encode(uint8_t slot, uint64_t frame_index) = 0;
 
 	void SendData(std::span<uint8_t> data, bool end_of_frame, bool control = false);
+
+private:
+	void send_aux_data(const aux_data_provider & aux);
 };
 
 } // namespace wivrn

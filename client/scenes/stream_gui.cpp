@@ -354,10 +354,37 @@ void scenes::stream::gui_performance_metrics()
 		                tracking_control.lock()->motions_to_photons / 1'000'000)
 		                .c_str());
 
+		gui_frame_synthesis_stats();
+
 		if (is_gui_interactable())
 			ImGui::Text("%s", _S("Press the grip button to move the window"));
 		else
 			ImGui::Text("%s", _S("Press both thumbsticks to display the WiVRn window"));
+	}
+}
+
+void scenes::stream::gui_frame_synthesis_stats()
+{
+	std::shared_lock lock(decoder_mutex);
+	for (size_t i = 0; i < view_count; ++i)
+	{
+		if (not decoders[i].decoder)
+			continue;
+		auto stats = decoders[i].decoder->frame_synthesis_stats();
+		if (not stats or stats->received == 0)
+			continue;
+
+		ImGui::TextUnformatted(
+		        fmt::format(
+		                "Depth/motion {}: {} received, {} decoded, {} errors, {} dropped, {:.1f} KiB/frame, {:.2f} ms",
+		                i == 0 ? "left" : "right",
+		                stats->received.load(),
+		                stats->decoded.load(),
+		                stats->errors.load(),
+		                stats->dropped.load(),
+		                stats->bytes.load() / 1024. / stats->received.load(),
+		                stats->decode_ms.load())
+		                .c_str());
 	}
 }
 
@@ -394,6 +421,7 @@ static void send_settings_changed_packet(xr::session & session, wivrn_session * 
 	                .bitrate_bps = config.bitrate_bps,
 	                .mirror_gamepad = config.forward_gamepad,
 	                .enabled_body_parts = config.body_part_mask,
+	                .frame_synthesis = config.frame_synthesis,
 	        });
 }
 

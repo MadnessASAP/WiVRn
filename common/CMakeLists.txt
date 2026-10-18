@@ -76,6 +76,32 @@ else()
     target_link_libraries(wivrn-common PUBLIC Vulkan::Headers)
 endif()
 
+# XR_EXT_frame_synthesis auxiliary data transport, compiled in the client and
+# server targets as it needs the OpenXR headers they provide
+if (WIVRN_BUILD_CLIENT OR WIVRN_BUILD_SERVER)
+    if (WIVRN_USE_SYSTEM_ZSTD AND NOT ANDROID)
+        pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET GLOBAL libzstd)
+        set(WIVRN_ZSTD_TARGET PkgConfig::ZSTD)
+    else()
+        set(ZSTD_BUILD_PROGRAMS OFF)
+        set(ZSTD_BUILD_TESTS OFF)
+        set(ZSTD_BUILD_SHARED OFF)
+        set(ZSTD_BUILD_STATIC ON)
+        set(ZSTD_LEGACY_SUPPORT OFF)
+        set(ZSTD_MULTITHREAD_SUPPORT OFF)
+        FetchContent_MakeAvailable(zstd)
+        set(WIVRN_ZSTD_TARGET libzstd_static)
+    endif()
+
+    add_library(wivrn-frame-synthesis INTERFACE)
+    target_sources(wivrn-frame-synthesis INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/frame_synthesis/annexb_sei.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/frame_synthesis/aux_codec.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/frame_synthesis/aux_frame.cpp
+    )
+    target_link_libraries(wivrn-frame-synthesis INTERFACE ${WIVRN_ZSTD_TARGET})
+endif()
+
 target_include_directories(wivrn-common-base PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(wivrn-common PUBLIC Boost::pfr OpenSSL::Crypto wivrn-external wivrn-common-base)
 target_compile_definitions(wivrn-common PUBLIC VULKAN_HPP_NO_STRUCT_CONSTRUCTORS)

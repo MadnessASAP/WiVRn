@@ -178,6 +178,20 @@ configuration::configuration()
 			}
 		}
 
+		if (auto it = json.find("frame-synthesis"); it != json.end())
+		{
+			if (it->is_boolean())
+				frame_synthesis_transport.enabled = *it;
+			else
+			{
+				frame_synthesis_transport.enabled = it->value("enabled", frame_synthesis_transport.enabled);
+				frame_synthesis_transport.scale = it->value("scale", frame_synthesis_transport.scale);
+				frame_synthesis_transport.depth_16bit = it->value("depth-16bit", frame_synthesis_transport.depth_16bit);
+				frame_synthesis_transport.compression_level = it->value("compression-level", frame_synthesis_transport.compression_level);
+				frame_synthesis_transport.max_view_kib = it->value("max-view-kib", frame_synthesis_transport.max_view_kib);
+			}
+		}
+
 		if (auto it = json.find("application"); it != json.end())
 		{
 			if (it->is_string())

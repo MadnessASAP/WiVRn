@@ -174,6 +174,7 @@ target_link_libraries(wivrn
     Vulkan::Vulkan
     wivrn-common
     wivrn-external
+    wivrn-frame-synthesis
 )
 
 target_compile_definitions(wivrn PRIVATE -DXR_USE_GRAPHICS_API_VULKAN)

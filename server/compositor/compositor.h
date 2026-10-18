@@ -26,6 +26,7 @@
 
 #include "encoder/encoder_settings.h"
 #include "foveation.h"
+#include "frame_synthesis.h"
 #include "layer_squasher.h"
 #include "pacer.h"
 #include "utils/wivrn_vk_bundle.h"
@@ -55,6 +56,8 @@ public:
 		vk::raii::ImageView view_cbcr;
 		to_headset::video_stream_data_shard::view_info_t view_info{};
 		uint64_t frame_index;
+		// Value of the compositor semaphore when the GPU work of this image is done
+		uint64_t gpu_done = 0;
 	};
 
 private:
@@ -79,6 +82,7 @@ private:
 	const u_logging_level log_level;
 	timings squasher_times;
 	timings foveation_times;
+	timings frame_synthesis_times;
 	wivrn_session & session;
 	vk_bundle vk;
 	vk::raii::CommandPool cmd_pool;
@@ -97,6 +101,7 @@ private:
 
 	layer_squasher squasher;
 	wivrn::foveation foveation;
+	frame_synthesis_capture fs_capture;
 
 	std::array<std::unique_ptr<video_encoder>, 3> encoders;
 
@@ -174,6 +179,8 @@ private:
 	}
 
 	int acquire_image();
+
+	void record_frame_synthesis(int image_index, const comp_layer * layer);
 
 	void encoder_work(std::stop_token);
 

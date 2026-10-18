@@ -51,7 +51,18 @@ struct configuration
 		std::optional<std::string> device;
 	};
 
+	// Transport of XR_EXT_frame_synthesis data, see docs/frame_synthesis_transport.md
+	struct frame_synthesis_config
+	{
+		bool enabled = true;
+		float scale = 0.5;
+		bool depth_16bit = false;
+		int compression_level = 1;
+		size_t max_view_kib = 2048;
+	};
+
 	std::array<encoder, 3> encoders; // left, right, alpha
+	frame_synthesis_config frame_synthesis_transport;
 	std::optional<uint8_t> bit_depth;
 	std::optional<std::array<float, 3>> grip_surface;
 	std::vector<std::string> application;

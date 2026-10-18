@@ -1,0 +1,108 @@
+/*
+ * WiVRn VR streaming
+ * Copyright (C) 2026  Michael Weinrich <michael@a5ap.net>
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+// Copy the XR_EXT_frame_synthesis motion vector and depth sub images of one
+// view into a host readable buffer, in the wire formats of
+// common/frame_synthesis/aux_frame.h.
+//
+// When the output is smaller than the source, each output pixel takes the
+// closest depth sample in its footprint and the motion vector of that same
+// sample, so that foreground edges are preserved.
+//
+// Values are copied unmodified: motion vectors are the raw texel values
+// (motionVectorScale and motionVectorOffset are applied by the receiver) and
+// depth is not linearized.
+
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#define MAX_FOOTPRINT 4
+
+layout(set = 0, binding = 0) uniform sampler2D motion_vectors;
+layout(set = 0, binding = 1) uniform sampler2D depth;
+layout(set = 0, binding = 2, std430) buffer restrict writeonly Output
+{
+	uint data[];
+} result;
+
+layout(push_constant) uniform Params
+{
+	ivec2 motion_offset; // sub image in the source images
+	ivec2 motion_extent;
+	ivec2 depth_offset;
+	ivec2 depth_extent;
+	ivec2 dst_extent;
+	uint motion_words; // 1: rg16 (2D), 2: rgba16 (3D)
+	uint depth_words_offset;
+	uint depth_half;   // 0: r32 float, 1: r16 float in the low bits
+	uint closest_is_max; // reversed depth
+} params;
+
+bool closer(float a, float b)
+{
+	return params.closest_is_max != 0 ? a > b : a < b;
+}
+
+void main()
+{
+	ivec2 dst = ivec2(gl_GlobalInvocationID.xy);
+	if (any(greaterThanEqual(dst, params.dst_extent)))
+		return;
+
+	// Footprint of the output pixel in the depth image
+	ivec2 begin = (dst * params.depth_extent) / params.dst_extent;
+	ivec2 end = max(((dst + 1) * params.depth_extent) / params.dst_extent, begin + 1);
+	ivec2 step = max((end - begin + MAX_FOOTPRINT - 1) / MAX_FOOTPRINT, ivec2(1));
+
+	ivec2 best = begin;
+	float best_depth = texelFetch(depth, params.depth_offset + begin, 0).r;
+	for (int y = begin.y; y < end.y; y += step.y)
+	{
+		for (int x = begin.x; x < end.x; x += step.x)
+		{
+			float d = texelFetch(depth, params.depth_offset + ivec2(x, y), 0).r;
+			if (closer(d, best_depth))
+			{
+				best_depth = d;
+				best = ivec2(x, y);
+			}
+		}
+	}
+
+	// Corresponding sample in the motion vector image, which may have a
+	// different resolution
+	ivec2 mv = min((best * params.motion_extent) / params.depth_extent, params.motion_extent - 1);
+	vec4 m = texelFetch(motion_vectors, params.motion_offset + mv, 0);
+
+	uint index = dst.y * params.dst_extent.x + dst.x;
+	if (params.motion_words == 1)
+	{
+		result.data[index] = packHalf2x16(m.xy);
+	}
+	else
+	{
+		result.data[2 * index] = packHalf2x16(m.xy);
+		result.data[2 * index + 1] = packHalf2x16(vec2(m.z, 0));
+	}
+
+	if (params.depth_half != 0)
+		result.data[params.depth_words_offset + index] = packHalf2x16(vec2(best_depth, 0));
+	else
+		result.data[params.depth_words_offset + index] = floatBitsToUint(best_depth);
+}

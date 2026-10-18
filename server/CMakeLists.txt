@@ -53,6 +53,7 @@ set(XRT_FEATURE_OPENXR_INTERACTION_TOUCH_PRO     ON)
 set(XRT_FEATURE_OPENXR_INTERACTION_TOUCH_PLUS    ON)
 set(XRT_FEATURE_OPENXR_LAYER_COLOR_SCALE_BIAS    ON)
 set(XRT_FEATURE_OPENXR_LAYER_DEPTH              OFF)
+set(XRT_FEATURE_OPENXR_FRAME_SYNTHESIS          ON)
 set(XRT_FEATURE_OPENXR_VARJO_QUAD_VIEWS         OFF)
 
 set(XRT_HAVE_BLUETOOTH               OFF)
@@ -112,6 +113,7 @@ if (WIVRN_BUILD_SERVER)
 			compositor/compositor.cpp
 			compositor/layer_squasher.cpp
 			compositor/foveation.cpp
+			compositor/frame_synthesis.cpp
 			compositor/pacer.cpp
 
 			encoder/encoder_settings.cpp
@@ -264,6 +266,7 @@ if (WIVRN_BUILD_SERVER)
 			PkgConfig::AVAHI
 			Eigen3::Eigen
 			wivrn-common
+			wivrn-frame-synthesis
 			wivrn-common-server
 			wivrn-external
 			nlohmann_json::nlohmann_json
@@ -276,9 +279,18 @@ if (WIVRN_BUILD_SERVER)
 		SHADERS
 			"${_monado_src}/src/xrt/auxiliary/render/shaders/layer.comp"
 			"${CMAKE_CURRENT_SOURCE_DIR}/compositor/shaders/foveation.comp"
+			"${CMAKE_CURRENT_SOURCE_DIR}/compositor/shaders/frame_synthesis_pack.comp"
 		)
 
 	target_compile_definitions(wivrn-server PRIVATE JSON_DIAGNOSTICS=1)
+
+	if (WIVRN_BUILD_TEST)
+		add_executable(test-frame-synthesis ${CMAKE_SOURCE_DIR}/common/frame_synthesis/test_frame_synthesis.cpp)
+		target_link_libraries(test-frame-synthesis wivrn-frame-synthesis wivrn-common xrt-external-openxr)
+
+		add_executable(wivrn-frame-synthesis-dump ${CMAKE_SOURCE_DIR}/common/frame_synthesis/dump_tool.cpp)
+		target_link_libraries(wivrn-frame-synthesis-dump wivrn-frame-synthesis wivrn-common xrt-external-openxr)
+	endif()
 
 	configure_file(dist/wivrn.service.in wivrn.service)
 	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/wivrn.service

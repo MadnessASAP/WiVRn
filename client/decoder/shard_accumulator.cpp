@@ -38,6 +38,8 @@ void shard_set::reset(uint64_t frame_index)
 {
 	min_for_reconstruction = -1;
 	data.clear();
+	aux.reset();
+	in_aux = false;
 
 	uint8_t stream_index = feedback.stream_index;
 	feedback = {};
@@ -183,7 +185,23 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 	std::vector<std::span<const uint8_t>> payload;
 	payload.reserve(last_idx - shard_idx);
 	for (size_t idx = shard_idx; idx < last_idx; ++idx)
-		payload.emplace_back(data_shards[idx]->payload);
+	{
+		std::span<const uint8_t> shard_payload = data_shards[idx]->payload;
+		if (fs_decoder)
+		{
+			// Auxiliary data SEI NAL units are sent in their own shards:
+			// a shard starting with a start code begins a new NAL unit,
+			// others continue the previous one.
+			if (frame_synthesis::starts_with_start_code(shard_payload))
+				current.in_aux = frame_synthesis::is_aux_sei_start(codec, shard_payload);
+			if (current.in_aux)
+			{
+				current.aux.push(shard_payload);
+				continue;
+			}
+		}
+		payload.emplace_back(shard_payload);
+	}
 
 	bool frame_complete = last_idx == data_shards.size() and data_shards.back()->timing_info;
 	decoder_->push_data(payload, data_shards[shard_idx]->frame_idx, not frame_complete);
@@ -203,6 +221,15 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 	{
 		spdlog::warn("first shard has no view_info");
 		return;
+	}
+
+	// Auxiliary data must be available before the colour image is decoded
+	if (fs_decoder and current.aux.has_data())
+	{
+		if (auto blob = current.aux.finish())
+			fs_decoder->push(current.frame_index(), std::move(*blob));
+		else
+			++fs_decoder->stats.errors;
 	}
 
 	// Try to extract a frame

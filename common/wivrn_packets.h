@@ -326,6 +326,11 @@ struct settings_changed
 	bool mirror_gamepad = false;
 	// which virtual trackers should be enabled for body tracking
 	std::underlying_type_t<body_part_mask> enabled_body_parts;
+
+	// Whether the headset wants to receive the XR_EXT_frame_synthesis
+	// auxiliary data of the application, only honoured when
+	// headset_info_packet::frame_synthesis_format matches
+	bool frame_synthesis = false;
 };
 
 struct headset_info_packet
@@ -357,6 +362,9 @@ struct headset_info_packet
 	uint32_t num_generic_trackers;
 	std::vector<video_codec_capability> supported_codecs; // from preferred to least preferred
 	std::optional<uint8_t> bit_depth;                     // explicit preference
+	// frame_synthesis::format_hash() of the supported auxiliary frame
+	// format carried in SEI of h264/h265 streams, 0 if unsupported
+	uint64_t frame_synthesis_format = 0;
 	std::string system_name;
 
 	// Used for the application list

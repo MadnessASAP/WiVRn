@@ -1,0 +1,1106 @@
+From 3276910f6323f7bf6a1247fd2c8ea3925f58dca0 Mon Sep 17 00:00:00 2001
+From: "Michael \"ASAP\" Weinrich" <michael@a5ap.net>
+Date: Sat, 17 Oct 2026 18:35:46 -0300
+Subject: [PATCH] st/oxr: add XR_EXT_frame_synthesis plumbing
+
+Validate XrFrameSynthesisInfoEXT chained to projection views and forward
+the motion vector and depth swapchains, together with scale/offset,
+appSpaceDeltaPose, the layer space pose and the depth range, through a new
+optional xrt_compositor::layer_frame_synthesis call that attaches the data
+to the last submitted projection layer.
+
+The data travels through the Vulkan client compositor, IPC and the
+multi compositor, and is accumulated by comp_base. Compositors that do
+not implement the call drop the data. XrFrameSynthesisConfigViewEXT
+recommends the color resolution.
+
+The extension is behind XRT_FEATURE_OPENXR_FRAME_SYNTHESIS (default OFF)
+as the main compositor does not consume the data.
+---
+ CMakeLists.txt                                |   2 +
+ cmake/MonadoSetOptions.cmake                  |   1 +
+ src/xrt/compositor/client/comp_vk_client.c    |  21 ++
+ .../compositor/multi/comp_multi_compositor.c  |  29 ++
+ src/xrt/compositor/multi/comp_multi_private.h |  13 +-
+ src/xrt/compositor/multi/comp_multi_system.c  |  32 ++-
+ src/xrt/compositor/util/comp_base.c           |  11 +
+ src/xrt/compositor/util/comp_layer_accum.c    |  43 +++
+ src/xrt/compositor/util/comp_layer_accum.h    |  48 +++-
+ src/xrt/include/xrt/xrt_compositor.h          | 102 +++++++
+ .../include/xrt/xrt_config_build.h.cmake_in   |   1 +
+ src/xrt/ipc/client/ipc_client_compositor.c    |  36 +++
+ src/xrt/ipc/server/ipc_server_handler.c       |  50 ++++
+ src/xrt/ipc/shared/ipc_protocol.h             |  15 +-
+ .../oxr_extension_support.py                  |   1 +
+ .../oxr/oxr_session_frame_end.c               | 255 ++++++++++++++++++
+ src/xrt/state_trackers/oxr/oxr_system.c       |  19 +-
+ 17 files changed, 668 insertions(+), 11 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f24211755..91b73210f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -407,6 +407,8 @@ option(XRT_FEATURE_OPENXR_FACE_TRACKING_ANDROID "Enable XR_ANDROID_face_tracking
+ option(XRT_FEATURE_OPENXR_FACE_TRACKING2_FB "Enable XR_FB_face_tracking2" ON)
+ option(XRT_FEATURE_OPENXR_FACIAL_TRACKING_HTC "Enable XR_HTC_facial_tracking" ON)
+ option(XRT_FEATURE_OPENXR_FORCE_FEEDBACK_CURL "Enable XR_MNDX_force_feedback_curl" ON)
++# XRT_FEATURE_OPENXR_FRAME_SYNTHESIS is off by default as the main compositor does not consume the data.
++option(XRT_FEATURE_OPENXR_FRAME_SYNTHESIS "Enable XR_EXT_frame_synthesis" OFF)
+ option(XRT_FEATURE_OPENXR_FUTURE_EXT "Enable XR_EXT_future" ON)
+ option(XRT_FEATURE_OPENXR_HAND_TRACKING_EXT "Enable XR_EXT_hand_tracking" ON)
+ option_with_deps(XRT_FEATURE_OPENXR_HAND_TRACKING_DATA_SOURCE_EXT DEPENDS XRT_FEATURE_OPENXR_HAND_TRACKING_EXT)
+diff --git a/cmake/MonadoSetOptions.cmake b/cmake/MonadoSetOptions.cmake
+index a53089d7a..1001b0e92 100644
+--- a/cmake/MonadoSetOptions.cmake
++++ b/cmake/MonadoSetOptions.cmake
+@@ -123,6 +123,7 @@ function(monado_set_options)
+ 		XRT_FEATURE_OPENXR_FACE_TRACKING_ANDROID
+ 		XRT_FEATURE_OPENXR_FACIAL_TRACKING_HTC
+ 		XRT_FEATURE_OPENXR_FORCE_FEEDBACK_CURL
++		XRT_FEATURE_OPENXR_FRAME_SYNTHESIS
+ 		XRT_FEATURE_OPENXR_FUTURE_EXT
+ 		XRT_FEATURE_OPENXR_HAND_TRACKING_DATA_SOURCE_EXT
+ 		XRT_FEATURE_OPENXR_HAND_TRACKING_EXT
+diff --git a/src/xrt/compositor/client/comp_vk_client.c b/src/xrt/compositor/client/comp_vk_client.c
+index ad3c7a6f7..08d0e67b2 100644
+--- a/src/xrt/compositor/client/comp_vk_client.c
++++ b/src/xrt/compositor/client/comp_vk_client.c
+@@ -515,6 +515,26 @@ client_vk_compositor_layer_stereo_projection_depth(struct xrt_compositor *xc,
+ 	return xrt_comp_layer_projection_depth(xcn, xdev, xscn, d_xscn, data);
+ }
+ 
++static xrt_result_t
++client_vk_compositor_layer_frame_synthesis(struct xrt_compositor *xc,
++                                           struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS],
++                                           struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
++                                           const struct xrt_layer_frame_synthesis_data *data)
++{
++	struct xrt_compositor *xcn;
++
++	struct xrt_swapchain *mv_xscn[XRT_MAX_VIEWS];
++	struct xrt_swapchain *d_xscn[XRT_MAX_VIEWS];
++
++	xcn = to_native_compositor(xc);
++	for (uint32_t i = 0; i < data->view_count; ++i) {
++		mv_xscn[i] = to_native_swapchain(mv_xsc[i]);
++		d_xscn[i] = to_native_swapchain(d_xsc[i]);
++	}
++
++	return xrt_comp_layer_frame_synthesis(xcn, mv_xscn, d_xscn, data);
++}
++
+ static xrt_result_t
+ client_vk_compositor_layer_quad(struct xrt_compositor *xc,
+                                 struct xrt_device *xdev,
+@@ -844,6 +864,7 @@ client_vk_compositor_create(struct xrt_compositor_native *xcn,
+ 	c->base.layer_begin = client_vk_compositor_layer_begin;
+ 	c->base.layer_projection = client_vk_compositor_layer_projection;
+ 	c->base.layer_projection_depth = client_vk_compositor_layer_stereo_projection_depth;
++	c->base.layer_frame_synthesis = client_vk_compositor_layer_frame_synthesis;
+ 	c->base.layer_quad = client_vk_compositor_layer_quad;
+ 	c->base.layer_cube = client_vk_compositor_layer_cube;
+ 	c->base.layer_cylinder = client_vk_compositor_layer_cylinder;
+diff --git a/src/xrt/compositor/multi/comp_multi_compositor.c b/src/xrt/compositor/multi/comp_multi_compositor.c
+index 0dcf90ca6..bcfbe42cb 100644
+--- a/src/xrt/compositor/multi/comp_multi_compositor.c
++++ b/src/xrt/compositor/multi/comp_multi_compositor.c
+@@ -709,6 +709,34 @@ multi_compositor_layer_projection_depth(struct xrt_compositor *xc,
+ 	return XRT_SUCCESS;
+ }
+ 
++static xrt_result_t
++multi_compositor_layer_frame_synthesis(struct xrt_compositor *xc,
++                                       struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS],
++                                       struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
++                                       const struct xrt_layer_frame_synthesis_data *data)
++{
++	struct multi_compositor *mc = multi_compositor(xc);
++
++	if (mc->progress.layer_count == 0 || data->view_count > XRT_MAX_VIEWS) {
++		return XRT_ERROR_INVALID_ARGUMENT;
++	}
++
++	struct multi_layer_entry *layer = &mc->progress.layers[mc->progress.layer_count - 1];
++	if ((layer->data.type != XRT_LAYER_PROJECTION && layer->data.type != XRT_LAYER_PROJECTION_DEPTH) ||
++	    layer->data.view_count != data->view_count) {
++		return XRT_ERROR_INVALID_ARGUMENT;
++	}
++
++	for (uint32_t i = 0; i < data->view_count; ++i) {
++		xrt_swapchain_reference(&layer->xscs[2 * XRT_MAX_VIEWS + i], mv_xsc[i]);
++		xrt_swapchain_reference(&layer->xscs[3 * XRT_MAX_VIEWS + i], d_xsc[i]);
++	}
++	layer->fs = *data;
++	layer->has_frame_synthesis = true;
++
++	return XRT_SUCCESS;
++}
++
+ static xrt_result_t
+ multi_compositor_layer_quad(struct xrt_compositor *xc,
+                             struct xrt_device *xdev,
+@@ -1010,6 +1038,7 @@ multi_compositor_create(struct multi_system_compositor *msc,
+ 	mc->base.base.layer_begin = multi_compositor_layer_begin;
+ 	mc->base.base.layer_projection = multi_compositor_layer_projection;
+ 	mc->base.base.layer_projection_depth = multi_compositor_layer_projection_depth;
++	mc->base.base.layer_frame_synthesis = multi_compositor_layer_frame_synthesis;
+ 	mc->base.base.layer_quad = multi_compositor_layer_quad;
+ 	mc->base.base.layer_cube = multi_compositor_layer_cube;
+ 	mc->base.base.layer_cylinder = multi_compositor_layer_cylinder;
+diff --git a/src/xrt/compositor/multi/comp_multi_private.h b/src/xrt/compositor/multi/comp_multi_private.h
+index 34e48e4ff..69c27f488 100644
+--- a/src/xrt/compositor/multi/comp_multi_private.h
++++ b/src/xrt/compositor/multi/comp_multi_private.h
+@@ -67,15 +67,24 @@ struct multi_layer_entry
+ 	/*!
+ 	 * Pointers to swapchains.
+ 	 *
+-	 * How many are actually used depends on the value of @p data.type
++	 * How many are actually used depends on the value of @p data.type,
++	 * frame synthesis swapchains are at offset 2 * XRT_MAX_VIEWS (motion
++	 * vectors) and 3 * XRT_MAX_VIEWS (depth) when @p has_frame_synthesis
++	 * is set.
+ 	 */
+-	struct xrt_swapchain *xscs[2 * XRT_MAX_VIEWS];
++	struct xrt_swapchain *xscs[4 * XRT_MAX_VIEWS];
+ 
+ 	/*!
+ 	 * All basic (trivially-serializable) data associated with a layer,
+ 	 * aside from which swapchain(s) are used.
+ 	 */
+ 	struct xrt_layer_data data;
++
++	//! Whether @p fs is valid, only for projection layers.
++	bool has_frame_synthesis;
++
++	//! Frame synthesis data (XR_EXT_frame_synthesis).
++	struct xrt_layer_frame_synthesis_data fs;
+ };
+ 
+ /*!
+diff --git a/src/xrt/compositor/multi/comp_multi_system.c b/src/xrt/compositor/multi/comp_multi_system.c
+index 325581f61..9aff22722 100644
+--- a/src/xrt/compositor/multi/comp_multi_system.c
++++ b/src/xrt/compositor/multi/comp_multi_system.c
+@@ -50,6 +50,30 @@
+  *
+  */
+ 
++static void
++do_frame_synthesis(struct xrt_compositor *xc, struct multi_layer_entry *layer, uint32_t i)
++{
++	if (!layer->has_frame_synthesis) {
++		return;
++	}
++
++	struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS];
++	struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS];
++
++	for (uint32_t j = 0; j < layer->fs.view_count; j++) {
++		mv_xsc[j] = layer->xscs[2 * XRT_MAX_VIEWS + j];
++		d_xsc[j] = layer->xscs[3 * XRT_MAX_VIEWS + j];
++
++		if (mv_xsc[j] == NULL || d_xsc[j] == NULL) {
++			U_LOG_E("Invalid frame synthesis swap chain for projection layer #%u!", i);
++			return;
++		}
++	}
++
++	// Optional for the native compositor, ignore XRT_ERROR_NOT_IMPLEMENTED.
++	xrt_comp_layer_frame_synthesis(xc, mv_xsc, d_xsc, &layer->fs);
++}
++
+ static void
+ do_projection_layer(struct xrt_compositor *xc, struct multi_compositor *mc, struct multi_layer_entry *layer, uint32_t i)
+ {
+@@ -71,7 +95,9 @@ do_projection_layer(struct xrt_compositor *xc, struct multi_compositor *mc, stru
+ 		return;
+ 	}
+ 
+-	xrt_comp_layer_projection(xc, xdev, layer->xscs, data);
++	if (xrt_comp_layer_projection(xc, xdev, layer->xscs, data) == XRT_SUCCESS) {
++		do_frame_synthesis(xc, layer, i);
++	}
+ }
+ 
+ static void
+@@ -103,7 +129,9 @@ do_projection_layer_depth(struct xrt_compositor *xc,
+ 	}
+ 
+ 
+-	xrt_comp_layer_projection_depth(xc, xdev, xsc, d_xsc, data);
++	if (xrt_comp_layer_projection_depth(xc, xdev, xsc, d_xsc, data) == XRT_SUCCESS) {
++		do_frame_synthesis(xc, layer, i);
++	}
+ }
+ 
+ static bool
+diff --git a/src/xrt/compositor/util/comp_base.c b/src/xrt/compositor/util/comp_base.c
+index fa3428be9..82a66b089 100644
+--- a/src/xrt/compositor/util/comp_base.c
++++ b/src/xrt/compositor/util/comp_base.c
+@@ -120,6 +120,16 @@ base_layer_projection_depth(struct xrt_compositor *xc,
+ 	return comp_layer_accum_projection_depth(&cb->layer_accum, xsc, d_xsc, data);
+ }
+ 
++static xrt_result_t
++base_layer_frame_synthesis(struct xrt_compositor *xc,
++                           struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS],
++                           struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
++                           const struct xrt_layer_frame_synthesis_data *data)
++{
++	struct comp_base *cb = comp_base(xc);
++	return comp_layer_accum_frame_synthesis(&cb->layer_accum, mv_xsc, d_xsc, data);
++}
++
+ static xrt_result_t
+ base_layer_quad(struct xrt_compositor *xc,
+                 struct xrt_device *xdev,
+@@ -224,6 +234,7 @@ comp_base_init(struct comp_base *cb)
+ 	iface->layer_begin = base_layer_begin;
+ 	iface->layer_projection = base_layer_projection;
+ 	iface->layer_projection_depth = base_layer_projection_depth;
++	iface->layer_frame_synthesis = base_layer_frame_synthesis;
+ 	iface->layer_quad = base_layer_quad;
+ 	iface->layer_cube = base_layer_cube;
+ 	iface->layer_cylinder = base_layer_cylinder;
+diff --git a/src/xrt/compositor/util/comp_layer_accum.c b/src/xrt/compositor/util/comp_layer_accum.c
+index 7314daff8..c4b065515 100644
+--- a/src/xrt/compositor/util/comp_layer_accum.c
++++ b/src/xrt/compositor/util/comp_layer_accum.c
+@@ -25,6 +25,7 @@ push_single_swapchain_layer(struct comp_layer_accum *cla, struct xrt_swapchain *
+ 	U_ZERO_ARRAY(layer->sc_array);
+ 	layer->sc_array[0] = xsc;
+ 	layer->data = *data;
++	layer->has_frame_synthesis = false;
+ 
+ 	cla->layer_count++;
+ 
+@@ -46,6 +47,20 @@ comp_layer_get_depth_swapchain(const struct comp_layer *cl, uint32_t swapchain_i
+ 	return cl->sc_array[XRT_MAX_VIEWS + swapchain_index];
+ }
+ 
++struct xrt_swapchain *
++comp_layer_get_frame_synthesis_motion_vector_swapchain(const struct comp_layer *cl, uint32_t swapchain_index)
++{
++	assert(cl->has_frame_synthesis);
++	return cl->sc_array[2 * XRT_MAX_VIEWS + swapchain_index];
++}
++
++struct xrt_swapchain *
++comp_layer_get_frame_synthesis_depth_swapchain(const struct comp_layer *cl, uint32_t swapchain_index)
++{
++	assert(cl->has_frame_synthesis);
++	return cl->sc_array[3 * XRT_MAX_VIEWS + swapchain_index];
++}
++
+ xrt_result_t
+ comp_layer_accum_begin(struct comp_layer_accum *cla, const struct xrt_layer_frame_data *data)
+ {
+@@ -70,6 +85,7 @@ comp_layer_accum_projection(struct comp_layer_accum *cla,
+ 		layer->sc_array[i] = xsc[i];
+ 	}
+ 	layer->data = *data;
++	layer->has_frame_synthesis = false;
+ 
+ 	cla->layer_count++;
+ 
+@@ -92,12 +108,39 @@ comp_layer_accum_projection_depth(struct comp_layer_accum *cla,
+ 		layer->sc_array[XRT_MAX_VIEWS + i] = d_xsc[i];
+ 	}
+ 	layer->data = *data;
++	layer->has_frame_synthesis = false;
+ 
+ 	cla->layer_count++;
+ 
+ 	return XRT_SUCCESS;
+ }
+ 
++xrt_result_t
++comp_layer_accum_frame_synthesis(struct comp_layer_accum *cla,
++                                 struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS],
++                                 struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
++                                 const struct xrt_layer_frame_synthesis_data *data)
++{
++	if (cla->layer_count == 0) {
++		return XRT_ERROR_INVALID_ARGUMENT;
++	}
++
++	struct comp_layer *layer = &cla->layers[cla->layer_count - 1];
++	if ((layer->data.type != XRT_LAYER_PROJECTION && layer->data.type != XRT_LAYER_PROJECTION_DEPTH) ||
++	    data->view_count != layer->data.view_count || data->view_count > XRT_MAX_VIEWS) {
++		return XRT_ERROR_INVALID_ARGUMENT;
++	}
++
++	for (uint32_t i = 0; i < data->view_count; ++i) {
++		layer->sc_array[2 * XRT_MAX_VIEWS + i] = mv_xsc[i];
++		layer->sc_array[3 * XRT_MAX_VIEWS + i] = d_xsc[i];
++	}
++	layer->fs = *data;
++	layer->has_frame_synthesis = true;
++
++	return XRT_SUCCESS;
++}
++
+ xrt_result_t
+ comp_layer_accum_quad(struct comp_layer_accum *cla, struct xrt_swapchain *xsc, const struct xrt_layer_data *data)
+ {
+diff --git a/src/xrt/compositor/util/comp_layer_accum.h b/src/xrt/compositor/util/comp_layer_accum.h
+index 58ac8e2cb..79e7db853 100644
+--- a/src/xrt/compositor/util/comp_layer_accum.h
++++ b/src/xrt/compositor/util/comp_layer_accum.h
+@@ -35,16 +35,26 @@ struct xrt_swapchain;
+ struct comp_layer
+ {
+ 	/*!
+-	 * Up to two compositor swapchains referenced per view (color and depth) for a layer.
++	 * Up to four compositor swapchains referenced per view for a layer:
++	 * color, depth, frame synthesis motion vectors, frame synthesis depth.
+ 	 *
+ 	 * Unused elements should be set to null.
+ 	 */
+-	struct xrt_swapchain *sc_array[XRT_MAX_VIEWS * 2];
++	struct xrt_swapchain *sc_array[XRT_MAX_VIEWS * 4];
+ 
+ 	/*!
+ 	 * All basic (trivially-serializable) data associated with a layer.
+ 	 */
+ 	struct xrt_layer_data data;
++
++	//! Whether @ref fs and the frame synthesis swapchains are valid.
++	bool has_frame_synthesis;
++
++	/*!
++	 * Frame synthesis data, only valid for projection layers when
++	 * @ref has_frame_synthesis is set.
++	 */
++	struct xrt_layer_frame_synthesis_data fs;
+ };
+ 
+ 
+@@ -71,6 +81,28 @@ comp_layer_get_swapchain(const struct comp_layer *cl, uint32_t swapchain_index);
+ struct xrt_swapchain *
+ comp_layer_get_depth_swapchain(const struct comp_layer *cl, uint32_t swapchain_index);
+ 
++/*!
++ * Get a frame synthesis motion vector swapchain associated with a projection layer
++ *
++ * @param cl self
++ * @param swapchain_index index of **color** swapchain - typically this is the view index.
++ *
++ * @public @memberof comp_layer
++ */
++struct xrt_swapchain *
++comp_layer_get_frame_synthesis_motion_vector_swapchain(const struct comp_layer *cl, uint32_t swapchain_index);
++
++/*!
++ * Get a frame synthesis depth swapchain associated with a projection layer
++ *
++ * @param cl self
++ * @param swapchain_index index of **color** swapchain - typically this is the view index.
++ *
++ * @public @memberof comp_layer
++ */
++struct xrt_swapchain *
++comp_layer_get_frame_synthesis_depth_swapchain(const struct comp_layer *cl, uint32_t swapchain_index);
++
+ 
+ 
+ /*!
+@@ -126,6 +158,18 @@ comp_layer_accum_projection_depth(struct comp_layer_accum *cla,
+                                   struct xrt_swapchain *xsc[XRT_MAX_VIEWS],
+                                   struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
+                                   const struct xrt_layer_data *data);
++/*!
++ * Attach frame synthesis swapchains and data to the last accumulated layer,
++ * which must be a projection layer.
++ *
++ * @public @memberof comp_layer_accum
++ */
++xrt_result_t
++comp_layer_accum_frame_synthesis(struct comp_layer_accum *cla,
++                                 struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS],
++                                 struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
++                                 const struct xrt_layer_frame_synthesis_data *data);
++
+ /*!
+  * Accumulate swapchain and data for a quad layer for a frame.
+  *
+diff --git a/src/xrt/include/xrt/xrt_compositor.h b/src/xrt/include/xrt/xrt_compositor.h
+index 3d8242540..a30adb212 100644
+--- a/src/xrt/include/xrt/xrt_compositor.h
++++ b/src/xrt/include/xrt/xrt_compositor.h
+@@ -431,6 +431,71 @@ struct xrt_layer_passthrough_data
+ 	struct xrt_passthrough_layer xrt_pl;
+ };
+ 
++/*!
++ * Flags for frame synthesis data, values match XrFrameSynthesisInfoFlagsEXT.
++ */
++enum xrt_frame_synthesis_flags
++{
++	//! The motion vector image contains 2D (rg) motion instead of 3D (rgb).
++	XRT_FRAME_SYNTHESIS_USE_2D_MOTION_VECTOR_BIT = 1u << 0u,
++	//! The application prefers additional time to render each frame.
++	XRT_FRAME_SYNTHESIS_REQUEST_RELAXED_FRAME_INTERVAL_BIT = 1u << 1u,
++};
++
++/*!
++ * Frame synthesis data (XR_EXT_frame_synthesis) for one view of a projection
++ * layer.
++ *
++ * The motion vector is defined as
++ * `image.rgb * motion_vector_scale + motion_vector_offset`, expressed as the
++ * difference of the current and previous Vulkan-style NDC positions
++ * ([-1,-1,0] to [1,1,1]). The w components of the OpenXR scale and offset are
++ * ignored by the specification and are not stored.
++ *
++ * The @ref xrt_swapchain references are provided outside of this struct.
++ */
++struct xrt_layer_frame_synthesis_view_data
++{
++	//! Bitmask of @ref xrt_frame_synthesis_flags.
++	uint64_t flags;
++
++	struct xrt_sub_image motion_vector_sub;
++	struct xrt_vec3 motion_vector_scale;
++	struct xrt_vec3 motion_vector_offset;
++
++	/*!
++	 * XrFrameSynthesisInfoEXT::appSpaceDeltaPose, unmodified: expressed in
++	 * the space of the projection layer.
++	 */
++	struct xrt_pose app_space_delta_pose;
++
++	/*!
++	 * Pose of the projection layer space in the same space as the view
++	 * poses of the projection layer (@ref xrt_layer_projection_view_data::pose)
++	 * at the time of the frame, so that @ref app_space_delta_pose can be
++	 * converted by the compositor.
++	 */
++	struct xrt_pose layer_space_pose;
++
++	struct xrt_sub_image depth_sub;
++	float min_depth;
++	float max_depth;
++	//! May be infinite, may be greater than far_z for reversed depth.
++	float near_z;
++	//! May be infinite.
++	float far_z;
++};
++
++/*!
++ * Frame synthesis data (XR_EXT_frame_synthesis) attached to a projection
++ * layer, see @ref xrt_compositor::layer_frame_synthesis.
++ */
++struct xrt_layer_frame_synthesis_data
++{
++	uint32_t view_count;
++	struct xrt_layer_frame_synthesis_view_data v[XRT_MAX_VIEWS];
++};
++
+ /*!
+  * All the pure data values associated with a composition layer.
+  *
+@@ -1395,6 +1460,23 @@ struct xrt_compositor
+ 	                                  struct xrt_device *xdev,
+ 	                                  const struct xrt_layer_data *data);
+ 
++	/*!
++	 * Attaches frame synthesis data (XR_EXT_frame_synthesis) to the
++	 * projection layer that was submitted last, by @ref layer_projection
++	 * or @ref layer_projection_depth.
++	 *
++	 * Optional, may be NULL: frame synthesis data is then dropped.
++	 *
++	 * @param xc          Self pointer
++	 * @param mv_xsc      Array of swapchain objects containing motion vectors.
++	 * @param d_xsc       Array of swapchain objects containing depth data.
++	 * @param data        All of the pure data bits (not pointers/handles).
++	 */
++	xrt_result_t (*layer_frame_synthesis)(struct xrt_compositor *xc,
++	                                      struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS],
++	                                      struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
++	                                      const struct xrt_layer_frame_synthesis_data *data);
++
+ 	/*!
+ 	 * @brief Commits all of the submitted layers.
+ 	 *
+@@ -1871,6 +1953,26 @@ xrt_comp_layer_passthrough(struct xrt_compositor *xc, struct xrt_device *xdev, c
+ 	return xc->layer_passthrough(xc, xdev, data);
+ }
+ 
++/*!
++ * @copydoc xrt_compositor::layer_frame_synthesis
++ *
++ * Helper for calling through the function pointer.
++ *
++ * @public @memberof xrt_compositor
++ */
++XRT_NONNULL_ALL static inline xrt_result_t
++xrt_comp_layer_frame_synthesis(struct xrt_compositor *xc,
++                               struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS],
++                               struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
++                               const struct xrt_layer_frame_synthesis_data *data)
++{
++	if (xc->layer_frame_synthesis == NULL) {
++		return XRT_ERROR_NOT_IMPLEMENTED;
++	}
++
++	return xc->layer_frame_synthesis(xc, mv_xsc, d_xsc, data);
++}
++
+ /*!
+  * @copydoc xrt_compositor::layer_commit
+  *
+diff --git a/src/xrt/include/xrt/xrt_config_build.h.cmake_in b/src/xrt/include/xrt/xrt_config_build.h.cmake_in
+index 81c547b90..44b4ce67a 100644
+--- a/src/xrt/include/xrt/xrt_config_build.h.cmake_in
++++ b/src/xrt/include/xrt/xrt_config_build.h.cmake_in
+@@ -64,6 +64,7 @@
+ #cmakedefine XRT_FEATURE_OPENXR_FACE_TRACKING_ANDROID
+ #cmakedefine XRT_FEATURE_OPENXR_FACIAL_TRACKING_HTC
+ #cmakedefine XRT_FEATURE_OPENXR_FORCE_FEEDBACK_CURL
++#cmakedefine XRT_FEATURE_OPENXR_FRAME_SYNTHESIS
+ #cmakedefine XRT_FEATURE_OPENXR_FUTURE_EXT
+ #cmakedefine XRT_FEATURE_OPENXR_HAND_TRACKING_DATA_SOURCE_EXT
+ #cmakedefine XRT_FEATURE_OPENXR_HAND_TRACKING_EXT
+diff --git a/src/xrt/ipc/client/ipc_client_compositor.c b/src/xrt/ipc/client/ipc_client_compositor.c
+index e013fb74b..746d6a282 100644
+--- a/src/xrt/ipc/client/ipc_client_compositor.c
++++ b/src/xrt/ipc/client/ipc_client_compositor.c
+@@ -598,6 +598,7 @@ ipc_compositor_layer_projection(struct xrt_compositor *xc,
+ 	struct ipc_layer_entry *layer = &slot->layers[icc->layers.layer_count];
+ 	layer->xdev_id = 0; //! @todo Real id.
+ 	layer->data = *data;
++	layer->has_frame_synthesis = false;
+ 	for (uint32_t i = 0; i < data->view_count; ++i) {
+ 		struct ipc_client_swapchain *ics = ipc_client_swapchain(xsc[i]);
+ 		layer->swapchain_ids[i] = ics->id;
+@@ -635,6 +636,7 @@ ipc_compositor_layer_projection_depth(struct xrt_compositor *xc,
+ 	layer->xdev_id = 0; //! @todo Real id.
+ 
+ 	layer->data = *data;
++	layer->has_frame_synthesis = false;
+ 
+ 	// Increment the number of layers.
+ 	icc->layers.layer_count++;
+@@ -642,6 +644,37 @@ ipc_compositor_layer_projection_depth(struct xrt_compositor *xc,
+ 	return XRT_SUCCESS;
+ }
+ 
++static xrt_result_t
++ipc_compositor_layer_frame_synthesis(struct xrt_compositor *xc,
++                                     struct xrt_swapchain *mv_xsc[XRT_MAX_VIEWS],
++                                     struct xrt_swapchain *d_xsc[XRT_MAX_VIEWS],
++                                     const struct xrt_layer_frame_synthesis_data *data)
++{
++	struct ipc_client_compositor *icc = ipc_client_compositor(xc);
++
++	if (icc->layers.layer_count == 0 || data->view_count > XRT_MAX_VIEWS) {
++		return XRT_ERROR_INVALID_ARGUMENT;
++	}
++
++	struct ipc_shared_memory *ism = icc->ipc_c->ism;
++	struct ipc_layer_slot *slot = &ism->slots[icc->layers.slot_id];
++	struct ipc_layer_entry *layer = &slot->layers[icc->layers.layer_count - 1];
++
++	if ((layer->data.type != XRT_LAYER_PROJECTION && layer->data.type != XRT_LAYER_PROJECTION_DEPTH) ||
++	    layer->data.view_count != data->view_count) {
++		return XRT_ERROR_INVALID_ARGUMENT;
++	}
++
++	for (uint32_t i = 0; i < data->view_count; ++i) {
++		layer->swapchain_ids[2 * XRT_MAX_VIEWS + i] = ipc_client_swapchain(mv_xsc[i])->id;
++		layer->swapchain_ids[3 * XRT_MAX_VIEWS + i] = ipc_client_swapchain(d_xsc[i])->id;
++	}
++	layer->fs = *data;
++	layer->has_frame_synthesis = true;
++
++	return XRT_SUCCESS;
++}
++
+ static xrt_result_t
+ handle_layer(struct xrt_compositor *xc,
+              struct xrt_device *xdev,
+@@ -664,6 +697,7 @@ handle_layer(struct xrt_compositor *xc,
+ 	layer->swapchain_ids[2] = -1;
+ 	layer->swapchain_ids[3] = -1;
+ 	layer->data = *data;
++	layer->has_frame_synthesis = false;
+ 
+ 	// Increment the number of layers.
+ 	icc->layers.layer_count++;
+@@ -729,6 +763,7 @@ ipc_compositor_layer_passthrough(struct xrt_compositor *xc, struct xrt_device *x
+ 
+ 	layer->xdev_id = 0; //! @todo Real id.
+ 	layer->data = *data;
++	layer->has_frame_synthesis = false;
+ 
+ 	// Increment the number of layers.
+ 	icc->layers.layer_count++;
+@@ -901,6 +936,7 @@ ipc_compositor_init(struct ipc_client_compositor *icc, struct xrt_compositor_nat
+ 	icc->base.base.layer_begin = ipc_compositor_layer_begin;
+ 	icc->base.base.layer_projection = ipc_compositor_layer_projection;
+ 	icc->base.base.layer_projection_depth = ipc_compositor_layer_projection_depth;
++	icc->base.base.layer_frame_synthesis = ipc_compositor_layer_frame_synthesis;
+ 	icc->base.base.layer_quad = ipc_compositor_layer_quad;
+ 	icc->base.base.layer_cube = ipc_compositor_layer_cube;
+ 	icc->base.base.layer_cylinder = ipc_compositor_layer_cylinder;
+diff --git a/src/xrt/ipc/server/ipc_server_handler.c b/src/xrt/ipc/server/ipc_server_handler.c
+index 0d49b27bf..63e2899d7 100644
+--- a/src/xrt/ipc/server/ipc_server_handler.c
++++ b/src/xrt/ipc/server/ipc_server_handler.c
+@@ -1149,6 +1149,52 @@ _update_projection_layer_depth(struct xrt_compositor *xc,
+ 	return xrt_comp_layer_projection_depth(xc, xdev, xcs, d_xcs, data);
+ }
+ 
++static xrt_result_t
++_update_frame_synthesis(struct xrt_compositor *xc,
++                        volatile struct ipc_client_state *ics,
++                        volatile struct ipc_layer_entry *layer,
++                        uint32_t i)
++{
++	if (!layer->has_frame_synthesis) {
++		return XRT_SUCCESS;
++	}
++
++	// Copy out of shared memory before validating.
++	struct xrt_layer_frame_synthesis_data fs = *(struct xrt_layer_frame_synthesis_data *)&layer->fs;
++
++	if (fs.view_count != layer->data.view_count || fs.view_count > XRT_MAX_VIEWS) {
++		U_LOG_E("Invalid view count for frame synthesis data of layer #%u!", i);
++		return XRT_ERROR_IPC_FAILURE;
++	}
++
++	struct xrt_swapchain *mv_xcs[XRT_MAX_VIEWS] = {0};
++	struct xrt_swapchain *d_xcs[XRT_MAX_VIEWS] = {0};
++
++	for (uint32_t j = 0; j < fs.view_count; j++) {
++		const uint32_t mv_xsci = layer->swapchain_ids[2 * XRT_MAX_VIEWS + j];
++		const uint32_t d_xsci = layer->swapchain_ids[3 * XRT_MAX_VIEWS + j];
++
++		if (mv_xsci >= IPC_MAX_CLIENT_SWAPCHAINS || d_xsci >= IPC_MAX_CLIENT_SWAPCHAINS) {
++			U_LOG_E("Invalid frame synthesis swapchain index for layer #%u!", i);
++			return XRT_ERROR_IPC_FAILURE;
++		}
++
++		mv_xcs[j] = ics->xscs[mv_xsci];
++		d_xcs[j] = ics->xscs[d_xsci];
++		if (mv_xcs[j] == NULL || d_xcs[j] == NULL) {
++			U_LOG_E("Invalid frame synthesis swapchain for layer #%u!", i);
++			return XRT_ERROR_IPC_FAILURE;
++		}
++	}
++
++	xrt_result_t xret = xrt_comp_layer_frame_synthesis(xc, mv_xcs, d_xcs, &fs);
++	if (xret == XRT_ERROR_NOT_IMPLEMENTED) {
++		// Frame synthesis data is optional, drop it.
++		return XRT_SUCCESS;
++	}
++	return xret;
++}
++
+ static xrt_result_t
+ do_single(struct xrt_compositor *xc,
+           volatile struct ipc_client_state *ics,
+@@ -1294,10 +1340,14 @@ _update_layers(volatile struct ipc_client_state *ics, struct ipc_layer_slot *slo
+ 		case XRT_LAYER_PROJECTION:
+ 			xret = _update_projection_layer(xc, ics, layer, i);
+ 			IPC_CHK_AND_RET(ics->server, xret, "_update_projection_layer");
++			xret = _update_frame_synthesis(xc, ics, layer, i);
++			IPC_CHK_AND_RET(ics->server, xret, "_update_frame_synthesis");
+ 			break;
+ 		case XRT_LAYER_PROJECTION_DEPTH:
+ 			xret = _update_projection_layer_depth(xc, ics, layer, i);
+ 			IPC_CHK_AND_RET(ics->server, xret, "_update_projection_layer_depth");
++			xret = _update_frame_synthesis(xc, ics, layer, i);
++			IPC_CHK_AND_RET(ics->server, xret, "_update_frame_synthesis");
+ 			break;
+ 		case XRT_LAYER_QUAD:
+ 			xret = _update_quad_layer(xc, ics, layer, i);
+diff --git a/src/xrt/ipc/shared/ipc_protocol.h b/src/xrt/ipc/shared/ipc_protocol.h
+index 3c9dca04f..e6bf0d0f9 100644
+--- a/src/xrt/ipc/shared/ipc_protocol.h
++++ b/src/xrt/ipc/shared/ipc_protocol.h
+@@ -222,17 +222,26 @@ struct ipc_layer_entry
+ 	uint32_t xdev_id;
+ 
+ 	/*!
+-	 * Up to two indices of swapchains to use.
++	 * Up to four indices of swapchains to use per view.
+ 	 *
+-	 * How many are actually used depends on the value of @p data.type
++	 * How many are actually used depends on the value of @p data.type,
++	 * frame synthesis swapchains are at offset 2 * XRT_MAX_VIEWS (motion
++	 * vectors) and 3 * XRT_MAX_VIEWS (depth) when @p has_frame_synthesis
++	 * is set.
+ 	 */
+-	uint32_t swapchain_ids[XRT_MAX_VIEWS * 2];
++	uint32_t swapchain_ids[XRT_MAX_VIEWS * 4];
+ 
+ 	/*!
+ 	 * All basic (trivially-serializable) data associated with a layer,
+ 	 * aside from which swapchain(s) are used.
+ 	 */
+ 	struct xrt_layer_data data;
++
++	//! Whether @p fs is valid, only for projection layers.
++	bool has_frame_synthesis;
++
++	//! Frame synthesis data (XR_EXT_frame_synthesis).
++	struct xrt_layer_frame_synthesis_data fs;
+ };
+ 
+ /*!
+diff --git a/src/xrt/state_trackers/oxr/extension_support/oxr_extension_support.py b/src/xrt/state_trackers/oxr/extension_support/oxr_extension_support.py
+index 12b54fec4..001491029 100644
+--- a/src/xrt/state_trackers/oxr/extension_support/oxr_extension_support.py
++++ b/src/xrt/state_trackers/oxr/extension_support/oxr_extension_support.py
+@@ -73,6 +73,7 @@ EXTENSIONS = (
+     ['XR_EXT_debug_utils', 'XRT_FEATURE_OPENXR_DEBUG_UTILS'],
+     ['XR_EXT_dpad_binding'],
+     ['XR_EXT_eye_gaze_interaction', 'XRT_FEATURE_OPENXR_INTERACTION_EXT_EYE_GAZE'],
++    ['XR_EXT_frame_synthesis', 'XRT_FEATURE_OPENXR_FRAME_SYNTHESIS'],
+     ['XR_EXT_future', 'XRT_FEATURE_OPENXR_FUTURE_EXT'],
+     ['XR_EXT_hand_interaction', 'XRT_FEATURE_OPENXR_INTERACTION_EXT_HAND'],
+     ['XR_EXT_hand_tracking', 'XRT_FEATURE_OPENXR_HAND_TRACKING_EXT'],
+diff --git a/src/xrt/state_trackers/oxr/oxr_session_frame_end.c b/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
+index 5bc5d81fb..88e3271f3 100644
+--- a/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
++++ b/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
+@@ -34,6 +34,7 @@
+ #include "oxr_xret.h"
+ #include "oxr_roles.h"
+ 
++#include <inttypes.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <assert.h>
+@@ -618,6 +619,151 @@ verify_depth_layer(struct xrt_compositor *xc,
+ }
+ #endif // OXR_HAVE_KHR_composition_layer_depth
+ 
++#ifdef OXR_HAVE_EXT_frame_synthesis
++static XrResult
++verify_frame_synthesis_sub_image(struct oxr_logger *log,
++                                 uint32_t layer_index,
++                                 uint32_t i,
++                                 const char *member,
++                                 const XrSwapchainSubImage *sub)
++{
++	if (sub->swapchain == XR_NULL_HANDLE) {
++		return oxr_error(log, XR_ERROR_HANDLE_INVALID,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.%s.swapchain) is "
++		                 "XR_NULL_HANDLE",
++		                 layer_index, i, member);
++	}
++
++	struct oxr_swapchain *sc = XRT_CAST_OXR_HANDLE_TO_PTR(struct oxr_swapchain *, sub->swapchain);
++
++	if (!sc->released.yes) {
++		return oxr_error(log, XR_ERROR_LAYER_INVALID,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.%s.swapchain) "
++		                 "swapchain has not been released",
++		                 layer_index, i, member);
++	}
++
++	if (sc->released.index >= (int)sc->swapchain->image_count) {
++		return oxr_error(log, XR_ERROR_RUNTIME_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.%s.swapchain) "
++		                 "internal image index out of bounds",
++		                 layer_index, i, member);
++	}
++
++	if (sc->array_layer_count <= sub->imageArrayIndex) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.%s.imageArrayIndex "
++		                 "== %u) Invalid swapchain array index (%u).",
++		                 layer_index, i, member, sub->imageArrayIndex, sc->array_layer_count);
++	}
++
++	if (sc->face_count != 1) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.%s.swapchain) "
++		                 "Invalid swapchain face count (expected 1, got %u)",
++		                 layer_index, i, member, sc->face_count);
++	}
++
++	if (is_rect_neg(&sub->imageRect)) {
++		return oxr_error(log, XR_ERROR_SWAPCHAIN_RECT_INVALID,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.%s.imageRect."
++		                 "offset == {%i, %i}) has negative component(s)",
++		                 layer_index, i, member, sub->imageRect.offset.x, sub->imageRect.offset.y);
++	}
++
++	if (is_rect_out_of_bounds(&sub->imageRect, sc)) {
++		return oxr_error(log, XR_ERROR_SWAPCHAIN_RECT_INVALID,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.%s.imageRect == "
++		                 "{{%i, %i}, {%u, %u}}) imageRect out of image bounds (%u, %u)",
++		                 layer_index, i, member, sub->imageRect.offset.x, sub->imageRect.offset.y,
++		                 sub->imageRect.extent.width, sub->imageRect.extent.height, sc->width, sc->height);
++	}
++
++	return XR_SUCCESS;
++}
++
++static XrResult
++verify_frame_synthesis(struct oxr_logger *log,
++                       uint32_t layer_index,
++                       uint32_t i,
++                       const XrFrameSynthesisInfoEXT *fs)
++{
++	const XrFrameSynthesisInfoFlagsEXT valid_flags = XR_FRAME_SYNTHESIS_INFO_USE_2D_MOTION_VECTOR_BIT_EXT |
++	                                                 XR_FRAME_SYNTHESIS_INFO_REQUEST_RELAXED_FRAME_INTERVAL_BIT_EXT;
++	if ((fs->layerFlags & ~valid_flags) != 0) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.layerFlags == "
++		                 "0x%" PRIx64 ") contains invalid bits",
++		                 layer_index, i, fs->layerFlags);
++	}
++
++	XrResult ret = verify_frame_synthesis_sub_image(log, layer_index, i, "motionVectorSubImage",
++	                                                &fs->motionVectorSubImage);
++	if (ret != XR_SUCCESS) {
++		return ret;
++	}
++
++	ret = verify_frame_synthesis_sub_image(log, layer_index, i, "depthSubImage", &fs->depthSubImage);
++	if (ret != XR_SUCCESS) {
++		return ret;
++	}
++
++	if (!math_quat_validate_within_1_percent((struct xrt_quat *)&fs->appSpaceDeltaPose.orientation)) {
++		const XrQuaternionf *q = &fs->appSpaceDeltaPose.orientation;
++		return oxr_error(log, XR_ERROR_POSE_INVALID,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.appSpaceDeltaPose."
++		                 "orientation == {%f %f %f %f}) is not a valid quat",
++		                 layer_index, i, q->x, q->y, q->z, q->w);
++	}
++
++	if (!math_vec3_validate((struct xrt_vec3 *)&fs->appSpaceDeltaPose.position)) {
++		const XrVector3f *p = &fs->appSpaceDeltaPose.position;
++		return oxr_error(log, XR_ERROR_POSE_INVALID,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.appSpaceDeltaPose."
++		                 "position == {%f %f %f}) is not valid",
++		                 layer_index, i, p->x, p->y, p->z);
++	}
++
++	if (!(fs->minDepth >= 0.0f && fs->minDepth <= 1.0f)) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.minDepth) %f must "
++		                 "be in [0.0,1.0]",
++		                 layer_index, i, fs->minDepth);
++	}
++
++	if (!(fs->maxDepth >= 0.0f && fs->maxDepth <= 1.0f)) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.maxDepth) %f must "
++		                 "be in [0.0,1.0]",
++		                 layer_index, i, fs->maxDepth);
++	}
++
++	if (fs->minDepth > fs->maxDepth) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.minDepth) %f must "
++		                 "be <= maxDepth %f",
++		                 layer_index, i, fs->minDepth, fs->maxDepth);
++	}
++
++	// Infinity is allowed, NaN and non-positive values are not.
++	if (!(fs->nearZ > 0.0f) || !(fs->farZ > 0.0f)) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.nearZ/farZ) %f/%f "
++		                 "must be positive distances",
++		                 layer_index, i, fs->nearZ, fs->farZ);
++	}
++
++	if (fs->nearZ == fs->farZ) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u]->views[%i]->next<XrFrameSynthesisInfoEXT>.nearZ) %f must be "
++		                 "!= farZ %f",
++		                 layer_index, i, fs->nearZ, fs->farZ);
++	}
++
++	return XR_SUCCESS;
++}
++#endif // OXR_HAVE_EXT_frame_synthesis
++
+ static XrResult
+ verify_projection_layer(struct oxr_session *sess,
+                         struct xrt_compositor *xc,
+@@ -688,6 +834,11 @@ verify_projection_layer(struct oxr_session *sess,
+ 	uint32_t depth_layer_count = 0;
+ #endif
+ 
++#ifdef OXR_HAVE_EXT_frame_synthesis
++	// number of frame synthesis structs must be 0 or proj->viewCount
++	uint32_t frame_synthesis_count = 0;
++#endif
++
+ 	// Check for valid swapchain states.
+ 	for (uint32_t i = 0; i < proj->viewCount; i++) {
+ 		const XrCompositionLayerProjectionView *view = &proj->views[i];
+@@ -778,6 +929,21 @@ verify_projection_layer(struct oxr_session *sess,
+ 			depth_layer_count++;
+ 		}
+ #endif // OXR_HAVE_KHR_composition_layer_depth
++
++#ifdef OXR_HAVE_EXT_frame_synthesis
++		const XrFrameSynthesisInfoEXT *fs_info =
++		    sess->sys->inst->extensions.EXT_frame_synthesis
++		        ? OXR_GET_INPUT_FROM_CHAIN(view, XR_TYPE_FRAME_SYNTHESIS_INFO_EXT, XrFrameSynthesisInfoEXT)
++		        : NULL;
++
++		if (fs_info) {
++			ret = verify_frame_synthesis(log, layer_index, i, fs_info);
++			if (ret != XR_SUCCESS) {
++				return ret;
++			}
++			frame_synthesis_count++;
++		}
++#endif // OXR_HAVE_EXT_frame_synthesis
+ 	}
+ 
+ #ifdef OXR_HAVE_KHR_composition_layer_depth
+@@ -789,6 +955,15 @@ verify_projection_layer(struct oxr_session *sess,
+ 	}
+ #endif // OXR_HAVE_KHR_composition_layer_depth
+ 
++#ifdef OXR_HAVE_EXT_frame_synthesis
++	if (frame_synthesis_count > 0 && frame_synthesis_count != proj->viewCount) {
++		return oxr_error(log, XR_ERROR_VALIDATION_FAILURE,
++		                 "(frameEndInfo->layers[%u] projection layer must have %u XrFrameSynthesisInfoEXT or "
++		                 "none, but has: %u)",
++		                 layer_index, proj->viewCount, frame_synthesis_count);
++	}
++#endif // OXR_HAVE_EXT_frame_synthesis
++
+ 	return XR_SUCCESS;
+ }
+ 
+@@ -1352,6 +1527,80 @@ submit_quad_layer(struct oxr_session *sess,
+ 	return XR_SUCCESS;
+ }
+ 
++#ifdef OXR_HAVE_EXT_frame_synthesis
++/*!
++ * Attach XR_EXT_frame_synthesis data to the projection layer just submitted.
++ *
++ * Validation has already made sure that either all or none of the views have
++ * the struct. Frame synthesis data is a hint, so failures are not fatal.
++ */
++static void
++submit_frame_synthesis(struct oxr_session *sess,
++                       struct xrt_compositor *xc,
++                       struct oxr_logger *log,
++                       const XrCompositionLayerProjection *proj,
++                       struct oxr_space *spc,
++                       uint64_t oxr_timestamp)
++{
++	struct xrt_layer_frame_synthesis_data fs;
++	U_ZERO(&fs);
++	struct xrt_swapchain *mv_swapchains[XRT_MAX_VIEWS] = {0};
++	struct xrt_swapchain *d_swapchains[XRT_MAX_VIEWS] = {0};
++
++	// Pose of the layer space, in the same space as the view poses.
++	const struct xrt_pose identity = XRT_POSE_IDENTITY;
++	struct xrt_pose layer_space_pose;
++	if (!handle_space(log, sess, spc, &identity, oxr_timestamp, &layer_space_pose)) {
++		return;
++	}
++
++	fs.view_count = proj->viewCount;
++	for (uint32_t i = 0; i < proj->viewCount; ++i) {
++		const XrFrameSynthesisInfoEXT *fs_info = OXR_GET_INPUT_FROM_CHAIN(
++		    &proj->views[i], XR_TYPE_FRAME_SYNTHESIS_INFO_EXT, XrFrameSynthesisInfoEXT);
++		if (fs_info == NULL) {
++			return; // It's all or nothing.
++		}
++
++		struct xrt_layer_frame_synthesis_view_data *v = &fs.v[i];
++		v->flags = fs_info->layerFlags;
++
++		struct oxr_swapchain *mv_sc =
++		    XRT_CAST_OXR_HANDLE_TO_PTR(struct oxr_swapchain *, fs_info->motionVectorSubImage.swapchain);
++		fill_in_sub_image(mv_sc, &fs_info->motionVectorSubImage, &v->motion_vector_sub);
++		mv_swapchains[i] = mv_sc->swapchain;
++
++		v->motion_vector_scale.x = fs_info->motionVectorScale.x;
++		v->motion_vector_scale.y = fs_info->motionVectorScale.y;
++		v->motion_vector_scale.z = fs_info->motionVectorScale.z;
++		v->motion_vector_offset.x = fs_info->motionVectorOffset.x;
++		v->motion_vector_offset.y = fs_info->motionVectorOffset.y;
++		v->motion_vector_offset.z = fs_info->motionVectorOffset.z;
++
++		v->app_space_delta_pose = *(const struct xrt_pose *)&fs_info->appSpaceDeltaPose;
++		if (!math_quat_validate(&v->app_space_delta_pose.orientation)) {
++			math_quat_normalize(&v->app_space_delta_pose.orientation);
++		}
++		v->layer_space_pose = layer_space_pose;
++
++		struct oxr_swapchain *d_sc =
++		    XRT_CAST_OXR_HANDLE_TO_PTR(struct oxr_swapchain *, fs_info->depthSubImage.swapchain);
++		fill_in_sub_image(d_sc, &fs_info->depthSubImage, &v->depth_sub);
++		d_swapchains[i] = d_sc->swapchain;
++
++		v->min_depth = fs_info->minDepth;
++		v->max_depth = fs_info->maxDepth;
++		v->near_z = fs_info->nearZ;
++		v->far_z = fs_info->farZ;
++	}
++
++	xrt_result_t xret = xrt_comp_layer_frame_synthesis(xc, mv_swapchains, d_swapchains, &fs);
++	if (xret != XRT_SUCCESS && xret != XRT_ERROR_NOT_IMPLEMENTED) {
++		oxr_warn(log, "xrt_comp_layer_frame_synthesis failed: %d, frame synthesis data dropped", xret);
++	}
++}
++#endif // OXR_HAVE_EXT_frame_synthesis
++
+ static XrResult
+ submit_projection_layer(struct oxr_session *sess,
+                         struct xrt_compositor *xc,
+@@ -1462,6 +1711,12 @@ submit_projection_layer(struct oxr_session *sess,
+ 		OXR_CHECK_XRET(log, sess, xret, xrt_comp_layer_projection);
+ 	}
+ 
++#ifdef OXR_HAVE_EXT_frame_synthesis
++	if (sess->sys->inst->extensions.EXT_frame_synthesis) {
++		submit_frame_synthesis(sess, xc, log, proj, spc, oxr_timestamp);
++	}
++#endif // OXR_HAVE_EXT_frame_synthesis
++
+ 	return XR_SUCCESS;
+ }
+ 
+diff --git a/src/xrt/state_trackers/oxr/oxr_system.c b/src/xrt/state_trackers/oxr/oxr_system.c
+index b29db63c6..b23e8ccab 100644
+--- a/src/xrt/state_trackers/oxr/oxr_system.c
++++ b/src/xrt/state_trackers/oxr/oxr_system.c
+@@ -923,6 +923,21 @@ oxr_system_enumerate_view_conf_views(struct oxr_logger *log,
+ 		return oxr_error(log, XR_ERROR_RUNTIME_FAILURE, "Didn't find view configs");
+ 	}
+ 
+-	OXR_TWO_CALL_FILL_IN_HELPER(log, viewCapacityInput, viewCountOutput, views, props->view_count,
+-	                            view_configuration_view_fill_in, props->views, XR_SUCCESS);
++	OXR_TWO_CALL_CHECK_ONLY(log, viewCapacityInput, viewCountOutput, props->view_count, XR_SUCCESS);
++
++	for (uint32_t i = 0; i < props->view_count; i++) {
++		view_configuration_view_fill_in(&views[i], &props->views[i]);
++
++#ifdef OXR_HAVE_EXT_frame_synthesis
++		XrFrameSynthesisConfigViewEXT *fs_view = OXR_GET_OUTPUT_FROM_CHAIN(
++		    &views[i], XR_TYPE_FRAME_SYNTHESIS_CONFIG_VIEW_EXT, XrFrameSynthesisConfigViewEXT);
++		if (fs_view != NULL && sys->inst->extensions.EXT_frame_synthesis) {
++			// The compositor decides on the transmitted resolution, recommend full resolution.
++			fs_view->recommendedMotionVectorImageRectWidth = props->views[i].recommendedImageRectWidth;
++			fs_view->recommendedMotionVectorImageRectHeight = props->views[i].recommendedImageRectHeight;
++		}
++#endif
++	}
++
++	return XR_SUCCESS;
+ }
+-- 
+2.56.0
+

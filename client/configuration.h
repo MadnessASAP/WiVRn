@@ -120,6 +120,10 @@ public:
 	float override_foveation_distance = 3;
 
 	bool high_power_mode = true;
+
+	// Request the XR_EXT_frame_synthesis data of applications (depth and
+	// motion vectors) along with the video stream
+	bool frame_synthesis = false;
 	uint32_t fps_divider = 1;
 
 	bool usb_network = false;

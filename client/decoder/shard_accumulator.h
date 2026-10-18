@@ -20,6 +20,8 @@
 #pragma once
 
 #include "decoder.h"
+#include "frame_synthesis/annexb_sei.h"
+#include "frame_synthesis_decoder.h"
 #include "wivrn_packets.h"
 
 #include <memory>
@@ -57,6 +59,12 @@ public:
 
 		wivrn::from_headset::feedback feedback{};
 
+		// In-band XR_EXT_frame_synthesis data of the frame
+		frame_synthesis::sei_reassembler aux;
+		// Whether the last shard pushed to the decoder belongs to an
+		// auxiliary data SEI NAL unit
+		bool in_aux = false;
+
 		explicit shard_set(uint8_t stream_index);
 		shard_set(const shard_set &) = default;
 		shard_set(shard_set &&) = default;
@@ -70,10 +78,12 @@ public:
 	};
 
 private:
+	const video_codec codec;
 	shard_set current;
 	shard_set next;
 	std::weak_ptr<scenes::stream> weak_scene;
 	xr::instance & instance;
+	std::unique_ptr<frame_synthesis_decoder> fs_decoder;
 
 public:
 	explicit shard_accumulator(
@@ -85,12 +95,17 @@ public:
 	        std::weak_ptr<scenes::stream> scene,
 	        uint8_t stream_index) :
 	        decoder_(decoder::make(device, physical_device, vk_queue_family_index, description, stream_index, scene, this)),
+	        codec(description.codec[stream_index]),
 	        current(stream_index),
 	        next(stream_index),
 	        weak_scene(scene),
 	        instance(instance)
 	{
+		current.aux = frame_synthesis::sei_reassembler(codec);
+		next.aux = frame_synthesis::sei_reassembler(codec);
 		next.reset(1);
+		if (stream_index < 2 and frame_synthesis::supports_sei(codec))
+			fs_decoder = std::make_unique<frame_synthesis_decoder>(device, vk_queue_family_index, stream_index);
 	}
 
 	void push_shard(wivrn::to_headset::video_stream_data_shard &&);
@@ -98,6 +113,17 @@ public:
 	vk::Sampler sampler()
 	{
 		return decoder_->sampler();
+	}
+
+	// XR_EXT_frame_synthesis images received with a frame, if any
+	std::shared_ptr<frame_synthesis_decoder::frame> frame_synthesis(uint64_t frame_index)
+	{
+		return fs_decoder ? fs_decoder->get(frame_index) : nullptr;
+	}
+
+	const frame_synthesis_decoder::statistics * frame_synthesis_stats() const
+	{
+		return fs_decoder ? &fs_decoder->stats : nullptr;
 	}
 
 	using blit_handle = decoder::blit_handle;

@@ -281,6 +281,8 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 		info.settings.bitrate_bps = config.bitrate_bps;
 		info.settings.mirror_gamepad = config.forward_gamepad;
 		info.settings.enabled_body_parts = config.body_part_mask;
+		info.settings.frame_synthesis = config.frame_synthesis;
+		info.frame_synthesis_format = wivrn::frame_synthesis::format_hash();
 
 		info.hand_tracking = config.check_feature(feature::hand_tracking);
 		info.eye_gaze = config.check_feature(feature::eye_gaze);
@@ -635,6 +637,8 @@ void scenes::stream::push_blit_handle(shard_accumulator * decoder, std::shared_p
 			if (decoder != decoders[stream].decoder.get())
 				return;
 			handle->feedback.received_from_decoder = instance.now();
+			// Auxiliary data is only valid for the exact frame and view it was received with
+			handle->frame_synthesis = decoder->frame_synthesis(handle->feedback.frame_index);
 			std::swap(handle, decoders[stream].latest_frames[handle->feedback.frame_index % decoders[stream].latest_frames.size()]);
 		}
 
