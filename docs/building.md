@@ -69,6 +69,19 @@ As Arch package names: git pkgconf glslang cmake jdk17-openjdk librsvg cli11 ktx
 
 OpenSSL build dependencies are also needed, as described [here](https://github.com/openssl/openssl/blob/master/INSTALL.md#prerequisites), in particular perl 5.
 
+#### Nix
+The flake provides a [devenv](https://devenv.sh) shell with the Android SDK, NDK, CMake, JDK and all build tools at the versions required by `build.gradle`, replacing the dependencies and Android environment steps below:
+```bash
+nix develop --no-pure-eval .#android
+./gradlew assembleDebug
+```
+It writes `local.properties` with the SDK location on entry. With direnv, use this `.envrc` instead to keep pure evaluation:
+```bash
+mkdir -p .devenv/state && printf %s "$PWD" > .devenv/root
+use flake .#android --override-input devenv-root "file+file://$PWD/.devenv/root"
+```
+The Android SDK is unfree: the flake allows only its components. `WIVRN_COMPRESS_GLB` additionally needs `gltf-transform` (`npm install --global @gltf-transform/cli`).
+
 #### Android environment
 Download [sdkmanager](https://developer.android.com/tools/sdkmanager) commandline tool and extract it to any directory.
 Create your `ANDROID_HOME` directory, for instance `~/Android`.

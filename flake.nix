@@ -1,13 +1,24 @@
 {
   inputs.nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
   inputs.flake-parts.url = "github:hercules-ci/flake-parts";
+  inputs.devenv.url = "github:cachix/devenv";
+  # Set by direnv (see docs/building.md) so that devenv shells work in pure evaluation mode
+  inputs.devenv-root = {
+    url = "file+file:///dev/null";
+    flake = false;
+  };
 
   outputs =
     inputs@{ nixpkgs, flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" ];
       perSystem =
-        { lib, pkgs, ... }:
+        {
+          lib,
+          pkgs,
+          system,
+          ...
+        }:
         let
           # Extra build inputs only inside the devShell.
           devBuildInputs = [
@@ -86,6 +97,13 @@
           );
         in
         {
+          # The Android SDK used by the android shell is unfree, allow only its components
+          _module.args.pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfreePredicate =
+              pkg: lib.hasPrefix "https://developer.android.com/" (pkg.meta.homepage or "");
+          };
+
           formatter = pkgs.nixfmt;
 
           packages = {
@@ -111,6 +129,17 @@
               preFixup = null;
             });
           };
+          # Android client build environment: nix develop --no-pure-eval .#android
+          # devenv needs the project directory, which pure evaluation (nix flake check)
+          # cannot provide, so it is not in devShells.
+          legacyPackages.android = inputs.devenv.lib.mkShell {
+            inherit inputs pkgs;
+            modules = [
+              inputs.devenv.flakeModules.readDevenvRoot
+              ./nix/android.nix
+            ];
+          };
+
           devShells.default = package.overrideAttrs (oldAttrs: {
             buildInputs = oldAttrs.buildInputs ++ devBuildInputs;
             nativeBuildInputs = oldAttrs.nativeBuildInputs ++ devTools;
