@@ -979,7 +979,7 @@ index 5bc5d81fb..88e3271f3 100644
  	return XR_SUCCESS;
  }
  
-@@ -1352,6 +1527,80 @@ submit_quad_layer(struct oxr_session *sess,
+@@ -1352,6 +1527,81 @@ submit_quad_layer(struct oxr_session *sess,
  	return XR_SUCCESS;
  }
  
@@ -1033,7 +1033,8 @@ index 5bc5d81fb..88e3271f3 100644
 +		v->motion_vector_offset.y = fs_info->motionVectorOffset.y;
 +		v->motion_vector_offset.z = fs_info->motionVectorOffset.z;
 +
-+		v->app_space_delta_pose = *(const struct xrt_pose *)&fs_info->appSpaceDeltaPose;
++		const struct xrt_pose *delta_pose = (const struct xrt_pose *)&fs_info->appSpaceDeltaPose;
++		v->app_space_delta_pose = *delta_pose;
 +		if (!math_quat_validate(&v->app_space_delta_pose.orientation)) {
 +			math_quat_normalize(&v->app_space_delta_pose.orientation);
 +		}
