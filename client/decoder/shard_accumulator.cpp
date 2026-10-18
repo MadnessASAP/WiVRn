@@ -20,6 +20,7 @@
 #include "shard_accumulator.h"
 #include "scenes/stream.h" // IWYU pragma: keep
 #include "spdlog/spdlog.h"
+#include "utils/atrace.h"
 #include "xr/instance.h"
 
 namespace wivrn
@@ -226,6 +227,7 @@ void shard_accumulator::try_submit_frame(uint16_t shard_idx)
 	// Auxiliary data must be available before the colour image is decoded
 	if (fs_decoder and current.aux.has_data())
 	{
+		atrace::section trace("frame synthesis reassemble");
 		if (auto blob = current.aux.finish())
 			fs_decoder->push(current.frame_index(), std::move(*blob));
 		else

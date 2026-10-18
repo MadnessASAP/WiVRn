@@ -22,6 +22,7 @@
 #pragma once
 
 #include "frame_synthesis/aux_frame.h"
+#include "utils/gpu_timestamp_pool.h"
 #include "vk/allocation.h"
 
 #include <array>
@@ -61,6 +62,8 @@ public:
 	{
 		buffer_allocation buffer;
 		std::array<std::optional<view>, 2> views;
+		// GPU timestamps of the capture are recorded and not yet collected
+		bool gpu_time_pending = false;
 	};
 
 	struct statistics
@@ -84,8 +87,13 @@ private:
 
 	std::vector<slot> slots;
 
+	// Duration of the capture compute pass, for tracing
+	gpu_timestamp_pool timestamps;
+
 	// Last rejection reason, to avoid spamming the log
 	std::string last_rejection;
+	// Frame being recorded, for tracing
+	uint64_t recording_frame = 0;
 	void reject(const std::string & reason);
 
 public:

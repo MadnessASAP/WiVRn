@@ -644,7 +644,10 @@ void compositor::record_frame_synthesis(int image_index, const comp_layer * laye
 	{
 		// The data is only transmitted for single projection layer frames
 		if (std::ranges::any_of(std::span(layer_accum.layers, layer_accum.layer_count), &comp_layer::has_frame_synthesis))
+		{
 			++fs_capture.stats.rejected_frames;
+			wivrn::trace::cpu_instant(wivrn::trace::cpu_track::compositor, "frame synthesis rejected: not a single projection layer", images[image_index].frame_index, -1);
+		}
 		return;
 	}
 
@@ -709,16 +712,23 @@ void compositor::encoder_work(std::stop_token tok)
 						if (not fs_capture.has_data(req, encoder->stream_idx))
 							return std::nullopt;
 
+						wivrn::trace::scope trace_aux(wivrn::trace::cpu_track::encoder, encoder->stream_idx, image.frame_index, "frame synthesis aux data");
 						// The capture buffer is written by the compositor submission,
 						// which may still be running
-						if (vk.device.waitSemaphores(
-						            vk::SemaphoreWaitInfo{
-						                    .semaphoreCount = 1,
-						                    .pSemaphores = &*sem,
-						                    .pValues = &image.gpu_done,
-						            },
-						            U_TIME_1S_IN_NS) != vk::Result::eSuccess)
-							return std::nullopt;
+						{
+							wivrn::trace::scope trace(wivrn::trace::cpu_track::encoder, encoder->stream_idx, image.frame_index, "frame synthesis wait");
+							if (vk.device.waitSemaphores(
+							            vk::SemaphoreWaitInfo{
+							                    .semaphoreCount = 1,
+							                    .pSemaphores = &*sem,
+							                    .pValues = &image.gpu_done,
+							            },
+							            U_TIME_1S_IN_NS) != vk::Result::eSuccess)
+							{
+								wivrn::trace::cpu_instant(wivrn::trace::cpu_track::encoder, "frame synthesis wait timeout", image.frame_index, encoder->stream_idx);
+								return std::nullopt;
+							}
+						}
 						return fs_capture.serialize(req, encoder->stream_idx);
 					});
 				else if (image.view_info.alpha)

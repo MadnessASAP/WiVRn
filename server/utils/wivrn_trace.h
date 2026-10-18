@@ -70,6 +70,7 @@ enum class gpu_track
 	vulkan_host_copy_overflow,
 	nvenc_copy,
 	va_copy,
+	frame_synthesis_pack,
 };
 void gpu_slice(gpu_track which, const char * slice_name, int64_t begin_ns, int64_t end_ns, uint64_t frame, uint8_t stream);
 
@@ -99,6 +100,10 @@ public:
 };
 
 void cpu_instant(cpu_track which, const char * name, uint64_t frame, uint8_t stream);
+
+// Sample of a counter track named name (in the category of which), e.g. a per-frame byte count.
+// name is copied at emit time (perfetto::DynamicString), so it need not outlive the call.
+void counter(cpu_track which, const char * name, int64_t value);
 
 // Non-RAII begin/end pair, for spans whose lifetime crosses function calls
 // (e.g. video_encoder::SendData where a frame is split across several calls).

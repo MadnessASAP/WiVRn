@@ -20,6 +20,7 @@
 
 #include "application.h"
 #include "frame_synthesis/aux_codec.h"
+#include "utils/atrace.h"
 #include "utils/named_thread.h"
 
 #include <chrono>
@@ -94,6 +95,8 @@ std::pair<image_allocation, vk::raii::ImageView> make_image(vk::raii::Device & d
 frame_synthesis_decoder::frame_synthesis_decoder(vk::raii::Device & device, uint32_t queue_family_index, uint8_t view_index) :
         device(device),
         view_index(view_index),
+        trace_latency(std::format("frame synthesis latency {}", view_index)),
+        trace_bytes(std::format("frame synthesis bytes {}", view_index)),
         command_pool(device, vk::CommandPoolCreateInfo{
                                      .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
                                      .queueFamilyIndex = queue_family_index,
@@ -126,6 +129,9 @@ void frame_synthesis_decoder::push(uint64_t frame_index, std::vector<uint8_t> &&
 {
 	++stats.received;
 	stats.bytes += blob.size();
+	// From the reception of the data to the end of the upload
+	atrace::async_begin(trace_latency.c_str(), int32_t(frame_index));
+	atrace::counter(trace_bytes.c_str(), blob.size());
 
 	auto f = std::make_shared<frame>(frame_index, view_index);
 	{
@@ -163,6 +169,7 @@ void frame_synthesis_decoder::run()
 
 		try
 		{
+			atrace::section trace("frame synthesis decode");
 			decode(j);
 		}
 		catch (std::exception & e)
@@ -171,6 +178,7 @@ void frame_synthesis_decoder::run()
 			j.target->status_.store(frame::state::failed, std::memory_order_release);
 			spdlog::warn("Invalid frame synthesis data for frame {} view {}: {}", j.target->frame_index, view_index, e.what());
 		}
+		atrace::async_end(trace_latency.c_str(), int32_t(j.target->frame_index));
 	}
 }
 
@@ -211,7 +219,10 @@ void frame_synthesis_decoder::decode(job & j)
 	++decode_count;
 	std::erase_if(pool->retired, [this](const retired_image & r) { return r.until < decode_count; });
 
-	auto parsed = parse(j.blob);
+	auto parsed = [&] {
+		atrace::section trace("frame synthesis parse");
+		return parse(j.blob);
+	}();
 	const auto & h = parsed.header;
 
 	// Never pair data with another frame or view than the one it came with
@@ -256,18 +267,22 @@ void frame_synthesis_decoder::decode(job & j)
 	}
 
 	uint8_t * mapped = staging.data();
-	decompress({h.motion.width, h.motion.height, uint32_t(components(h.motion_encoding)), 2, uint32_t(bytes_per_pixel(h.motion_encoding))},
-	           parsed.motion_payload,
-	           h.motion.filter_mode,
-	           h.motion.compression_mode,
-	           std::span(mapped, motion_size));
-	decompress({h.depth.width, h.depth.height, 1, uint32_t(bytes_per_pixel(h.depth_encoding)), uint32_t(bytes_per_pixel(h.depth_encoding))},
-	           parsed.depth_payload,
-	           h.depth.filter_mode,
-	           h.depth.compression_mode,
-	           std::span(mapped + motion_size, depth_size));
-	vmaFlushAllocation(vk_allocator::instance(), staging, 0, motion_size + depth_size);
+	{
+		atrace::section trace("frame synthesis decompress");
+		decompress({h.motion.width, h.motion.height, uint32_t(components(h.motion_encoding)), 2, uint32_t(bytes_per_pixel(h.motion_encoding))},
+		           parsed.motion_payload,
+		           h.motion.filter_mode,
+		           h.motion.compression_mode,
+		           std::span(mapped, motion_size));
+		decompress({h.depth.width, h.depth.height, 1, uint32_t(bytes_per_pixel(h.depth_encoding)), uint32_t(bytes_per_pixel(h.depth_encoding))},
+		           parsed.depth_payload,
+		           h.depth.filter_mode,
+		           h.depth.compression_mode,
+		           std::span(mapped + motion_size, depth_size));
+		vmaFlushAllocation(vk_allocator::instance(), staging, 0, motion_size + depth_size);
+	}
 
+	atrace::section trace_upload("frame synthesis upload");
 	cmd.reset();
 	cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 

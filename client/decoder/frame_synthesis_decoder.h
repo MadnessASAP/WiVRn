@@ -29,6 +29,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
@@ -122,6 +123,10 @@ private:
 
 	vk::raii::Device & device;
 	const uint8_t view_index;
+
+	// System trace names, per view
+	const std::string trace_latency;
+	const std::string trace_bytes;
 
 	// Images replaced after a size or format change, kept until the GPU
 	// can no longer use them

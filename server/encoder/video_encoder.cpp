@@ -28,6 +28,7 @@
 #include "utils/wivrn_trace.h"
 #include "wivrn_config.h"
 
+#include <format>
 #include <string>
 
 #if WIVRN_USE_NVENC
@@ -313,12 +314,22 @@ void video_encoder::send_aux_data(const aux_data_provider & aux)
 		auto blob = aux();
 		if (not blob)
 			return;
+		wivrn::trace::scope trace(wivrn::trace::cpu_track::encoder, stream_idx, shard.frame_idx, "frame synthesis SEI");
 		nals = frame_synthesis::make_sei_nals(codec, *blob);
 	}
 	catch (std::exception & e)
 	{
+		wivrn::trace::cpu_instant(wivrn::trace::cpu_track::encoder, "frame synthesis data dropped", shard.frame_idx, stream_idx);
 		U_LOG_W("Frame synthesis data dropped: %s", e.what());
 		return;
+	}
+
+	if (wivrn::trace::is_enabled())
+	{
+		size_t bytes = 0;
+		for (const auto & nal: nals)
+			bytes += nal.size();
+		wivrn::trace::counter(wivrn::trace::cpu_track::network, std::format("frame synthesis SEI bytes {}", stream_idx).c_str(), bytes);
 	}
 
 	// Each SEI NAL unit is sent with its own SendData call, so that it starts

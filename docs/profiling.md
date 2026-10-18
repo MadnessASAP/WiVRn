@@ -37,6 +37,14 @@ adb shell setprop persist.traced.enable 1
 Then use the [Perfetto UI](https://ui.perfetto.dev/) → connect device. See the
 [Android tracing quickstart](https://perfetto.dev/docs/quickstart/android-tracing).
 
+The client emits ATrace sections and counters (`client/utils/atrace.h`); they are recorded when the
+capture enables the atrace data source for the client package. `tools/perfetto/wivrn_hmd_trace_cfg.pbtx`
+does this, plus scheduling:
+```bash
+adb shell perfetto --txt -c - -o /data/misc/perfetto-traces/wivrn.pftrace < tools/perfetto/wivrn_hmd_trace_cfg.pbtx
+adb pull /data/misc/perfetto-traces/wivrn.pftrace
+```
+
 ## Backends — `WIVRN_TRACING`
 
 `WIVRN_TRACING` enables tracing and selects how it is collected. Unset/`off` = disabled; unknown
@@ -172,3 +180,38 @@ the emit (a literal is fine). Place the span at the operation's semantic start, 
 | `encoder` | `wivrn_encoder` | WiVRn encoder |
 | `compositor` | `wivrn_compositor` | WiVRn compositor |
 | `network` | `wivrn_network` | WiVRn network |
+
+Counters (e.g. a byte count per frame) go on their own counter track:
+```cpp
+wivrn::trace::counter(wivrn::trace::cpu_track::encoder, "my bytes", size);
+```
+
+## Frame synthesis (XR_EXT_frame_synthesis) events
+
+Emitted only for frames whose motion vector and depth images are transported.
+
+Server:
+
+| Event | Track | Meaning |
+| ----- | ----- | ------- |
+| `frame synthesis record` | compositor | CPU recording of the capture pass |
+| `frame synthesis rejected: <reason>` (instant) | compositor | layer cannot be transported |
+| `frame synthesis pack` (GPU) | encoder | capture compute pass, both views |
+| `frame synthesis aux data` | encoder | wait and compression of one view, before its colour frame is encoded |
+| `frame synthesis wait` | encoder | wait for the compositor GPU work (capture buffer) |
+| `frame synthesis compress`, `compress motion vectors`, `compress depth` | encoder | filtering and compression |
+| `frame synthesis SEI` | encoder | building the SEI NAL units |
+| `send frame synthesis data` | encoder | sending the SEI NAL units |
+| `frame synthesis data too large`, `frame synthesis compression failed`, `frame synthesis data dropped`, `frame synthesis wait timeout` (instants) | encoder | data not sent |
+| `frame synthesis {motion,depth} bytes <view>` (counters) | | compressed sizes |
+| `frame synthesis SEI bytes <stream>` (counter) | | bytes sent in SEI NAL units |
+
+Client (ATrace):
+
+| Event | Thread | Meaning |
+| ----- | ------ | ------- |
+| `frame synthesis reassemble` | network | SEI payload reassembly |
+| `frame synthesis decode` | `frame-synthesis-<view>` | parse, decompress, upload |
+| `frame synthesis parse`, `frame synthesis decompress`, `frame synthesis upload` | `frame-synthesis-<view>` | stages of decode |
+| `frame synthesis latency <view>` (async) | | from reception to end of upload, cookie = frame index |
+| `frame synthesis bytes <view>` (counter) | | received blob size |

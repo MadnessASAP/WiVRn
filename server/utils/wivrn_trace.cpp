@@ -422,6 +422,26 @@ void cpu_instant(cpu_track which, const char * name, uint64_t frame, uint8_t str
 	}
 }
 
+void counter(cpu_track which, const char * name, int64_t value)
+{
+	if (!initialized)
+		return;
+	const auto ts = static_cast<uint64_t>(os_monotonic_get_ns());
+	perfetto::CounterTrack trk(perfetto::DynamicString{name});
+	switch (which)
+	{
+		case cpu_track::encoder:
+			TRACE_COUNTER("wivrn_encoder", trk, ts, value);
+			break;
+		case cpu_track::compositor:
+			TRACE_COUNTER("wivrn_compositor", trk, ts, value);
+			break;
+		case cpu_track::network:
+			TRACE_COUNTER("wivrn_network", trk, ts, value);
+			break;
+	}
+}
+
 void cpu_begin(cpu_track which, uint8_t stream, uint64_t frame, const char * name)
 {
 	if (!initialized)
@@ -488,6 +508,7 @@ scope::scope(cpu_track which, uint8_t stream, uint64_t frame, const char * name)
         which(which), stream(stream), frame(frame), name(name), begin_ns(0), active(false) {}
 scope::~scope() {}
 void cpu_instant(cpu_track, const char *, uint64_t, uint8_t) {}
+void counter(cpu_track, const char *, int64_t) {}
 void cpu_begin(cpu_track, uint8_t, uint64_t, const char *) {}
 void cpu_end(cpu_track, uint8_t, uint64_t, const char *) {}
 } // namespace wivrn::trace

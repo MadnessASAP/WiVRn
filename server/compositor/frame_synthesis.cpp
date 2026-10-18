@@ -34,6 +34,7 @@
 #include <cmath>
 #include <format>
 #include <string_view>
+#include <utility>
 #include <vulkan/vulkan_format_traits.hpp>
 
 namespace
@@ -238,11 +239,15 @@ frame_synthesis_capture::frame_synthesis_capture(vk_bundle & vk, const settings 
 
 	// Buffers are allocated on first use, with the size of the transmitted images
 	slots.resize(slot_count);
+
+	timestamps = gpu_timestamp_pool(vk, vk.queue.family_index, slot_count, "frame synthesis capture");
 }
 
 void frame_synthesis_capture::reject(const std::string & reason)
 {
 	++stats.rejected_frames;
+	if (wivrn::trace::is_enabled())
+		wivrn::trace::cpu_instant(wivrn::trace::cpu_track::compositor, std::format("frame synthesis rejected: {}", reason).c_str(), recording_frame, -1);
 	if (reason != last_rejection)
 	{
 		U_LOG_W("Frame synthesis data not transmitted: %s", reason.c_str());
@@ -253,6 +258,7 @@ void frame_synthesis_capture::reject(const std::string & reason)
 void frame_synthesis_capture::clear(size_t slot_index)
 {
 	slots[slot_index].views = {};
+	slots[slot_index].gpu_time_pending = false;
 }
 
 bool frame_synthesis_capture::record(vk::raii::CommandBuffer & cmd,
@@ -264,9 +270,13 @@ bool frame_synthesis_capture::record(vk::raii::CommandBuffer & cmd,
 {
 	auto & slot = slots.at(slot_index);
 	slot.views = {};
+	slot.gpu_time_pending = false;
+	recording_frame = frame_index;
 
 	if (not layer.has_frame_synthesis)
 		return false;
+
+	wivrn::trace::scope trace(wivrn::trace::cpu_track::compositor, -1, frame_index, "frame synthesis record");
 
 	if (layer.fs.view_count != 2 or layer.data.view_count != 2)
 	{
@@ -397,6 +407,7 @@ bool frame_synthesis_capture::record(vk::raii::CommandBuffer & cmd,
 		        std::format("frame synthesis buffer {}", slot_index));
 	}
 
+	timestamps.cmd_begin(cmd, slot_index, frame_index, vk::PipelineStageFlagBits2::eComputeShader);
 	cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline);
 	for (uint32_t i = 0; i < 2; ++i)
 	{
@@ -448,6 +459,8 @@ bool frame_synthesis_capture::record(vk::raii::CommandBuffer & cmd,
 		cmd.pushConstants<push_constants>(*layout, vk::ShaderStageFlagBits::eCompute, 0, params[i]);
 		cmd.dispatch(divide_and_round_up(params[i].dst_extent[0], 8), divide_and_round_up(params[i].dst_extent[1], 8), 1);
 	}
+	timestamps.cmd_end(cmd, slot_index, vk::PipelineStageFlagBits2::eComputeShader);
+	slot.gpu_time_pending = true;
 
 	// Make the results visible to the CPU once the submission completed
 	vk::MemoryBarrier2 barrier{
@@ -481,6 +494,13 @@ std::optional<std::vector<uint8_t>> frame_synthesis_capture::serialize(size_t sl
 	auto & v = *slot.views[view_index];
 	auto header = v.header;
 
+	// The GPU work is complete: both views were captured by the same pass
+	if (std::exchange(slot.gpu_time_pending, false))
+	{
+		if (auto s = timestamps.collect(slot_index))
+			wivrn::trace::gpu_slice(wivrn::trace::gpu_track::frame_synthesis_pack, "frame synthesis pack", s->begin_ns, s->end_ns, s->frame_index, -1);
+	}
+
 	wivrn::trace::scope trace(wivrn::trace::cpu_track::encoder, view_index, header.frame_index, "frame synthesis compress");
 
 	vmaInvalidateAllocation(vk_allocator::instance(), slot.buffer, v.buffer_offset, view_buffer_size(header));
@@ -494,24 +514,37 @@ std::optional<std::vector<uint8_t>> frame_synthesis_capture::serialize(size_t sl
 	try
 	{
 		std::vector<uint8_t> motion_payload, depth_payload;
-		header.motion.compressed_size = compress(
-		        {header.motion.width, header.motion.height, motion_words * 2, 2, motion_words * 4},
-		        motion,
-		        header.motion.filter_mode,
-		        header.motion.compression_mode,
-		        config.compression_level,
-		        motion_payload);
-		header.depth.compressed_size = compress(
-		        {header.depth.width, header.depth.height, 1, uint32_t(bytes_per_pixel(header.depth_encoding)), 4},
-		        depth,
-		        header.depth.filter_mode,
-		        header.depth.compression_mode,
-		        config.compression_level,
-		        depth_payload);
+		{
+			wivrn::trace::scope trace(wivrn::trace::cpu_track::encoder, view_index, header.frame_index, "compress motion vectors");
+			header.motion.compressed_size = compress(
+			        {header.motion.width, header.motion.height, motion_words * 2, 2, motion_words * 4},
+			        motion,
+			        header.motion.filter_mode,
+			        header.motion.compression_mode,
+			        config.compression_level,
+			        motion_payload);
+		}
+		{
+			wivrn::trace::scope trace(wivrn::trace::cpu_track::encoder, view_index, header.frame_index, "compress depth");
+			header.depth.compressed_size = compress(
+			        {header.depth.width, header.depth.height, 1, uint32_t(bytes_per_pixel(header.depth_encoding)), 4},
+			        depth,
+			        header.depth.filter_mode,
+			        header.depth.compression_mode,
+			        config.compression_level,
+			        depth_payload);
+		}
+
+		if (wivrn::trace::is_enabled())
+		{
+			wivrn::trace::counter(wivrn::trace::cpu_track::encoder, std::format("frame synthesis motion bytes {}", view_index).c_str(), motion_payload.size());
+			wivrn::trace::counter(wivrn::trace::cpu_track::encoder, std::format("frame synthesis depth bytes {}", view_index).c_str(), depth_payload.size());
+		}
 
 		if (motion_payload.size() + depth_payload.size() > config.max_view_size)
 		{
 			++stats.oversized_views;
+			wivrn::trace::cpu_instant(wivrn::trace::cpu_track::encoder, "frame synthesis data too large", header.frame_index, view_index);
 			U_LOG_D("Frame synthesis data for view %zu too large: %zu bytes", view_index, motion_payload.size() + depth_payload.size());
 			return std::nullopt;
 		}
@@ -522,6 +555,7 @@ std::optional<std::vector<uint8_t>> frame_synthesis_capture::serialize(size_t sl
 	}
 	catch (std::exception & e)
 	{
+		wivrn::trace::cpu_instant(wivrn::trace::cpu_track::encoder, "frame synthesis compression failed", header.frame_index, view_index);
 		U_LOG_W("Failed to compress frame synthesis data: %s", e.what());
 		return std::nullopt;
 	}
