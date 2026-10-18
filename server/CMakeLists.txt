@@ -196,6 +196,7 @@ if (WIVRN_BUILD_SERVER)
 	if(WIVRN_USE_PERFETTO)
 		find_path(PERFETTO_SDK_DIR
 			NAMES perfetto.h
+			HINTS ENV PERFETTO_SDK_DIR
 			PATHS /usr/share/perfetto/sdk
 			DOC "Perfetto amalgamated SDK directory")
 		if(NOT PERFETTO_SDK_DIR)

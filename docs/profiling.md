@@ -26,7 +26,8 @@ tools/perfetto/wivrn_capture.py       # WiVRn-only; --full adds Monado + ftrace
 
 `WIVRN_USE_PERFETTO` defaults `OFF`; even built `ON`, tracing is inert until `WIVRN_TRACING` is set.
 The Perfetto amalgamated SDK must be installed where CMake looks (`/usr/share/perfetto/sdk`, override
-with `-DPERFETTO_SDK_DIR=<dir>`); no automatic fetch.
+with `-DPERFETTO_SDK_DIR=<dir>` or `PERFETTO_SDK_DIR` in the environment); no automatic fetch. With Nix,
+`nix develop --no-pure-eval .#tracing` provides it.
 
 ## HMD profiling
 
