@@ -180,6 +180,7 @@ xrt_result_t wivrn_hmd::get_view_poses(const xrt_vec3 * default_eye_relation,
 	auto target_ns = std::min(now + max_extrapolation_ns, at_timestamp_ns);
 	auto [production_timestamp, view] = views.get_at(target_ns);
 	cnx->add_tracking_request(device_id::HEAD, at_timestamp_ns, production_timestamp, now);
+	cnx->get_timing_log().on_view_poses(at_timestamp_ns, production_timestamp);
 
 	int flags = view.relation.relation_flags;
 

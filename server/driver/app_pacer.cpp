@@ -18,6 +18,8 @@
 
 #include "app_pacer.h"
 
+#include "compositor/frame_timing_log.h"
+
 #include "util/u_debug.h"
 #include "util/u_time.h"
 #include "util/u_var.h"
@@ -53,6 +55,7 @@ class app_pacer : public u_pacing_app
 		int64_t frame_id;
 		int64_t wake_up;
 		int64_t delivered;
+		int64_t display_time;
 	};
 	std::array<frame, 16> frames{};
 
@@ -158,6 +161,7 @@ void app_pacer::predict(int64_t now_ns,
 		*out_predicted_display_period = period;
 		*out_wake_up_time = last_display_time - (cpu_time + gpu_time + compositor_time + int64_t(U_TIME_1MS_IN_NS * min_margin_ms.val));
 	}
+	get_frame(frame_id).display_time = *out_predicted_display_time;
 }
 
 void app_pacer::mark_point(int64_t frame_id, enum u_timing_point point, int64_t when_ns)
@@ -214,6 +218,9 @@ void app_pacer::mark_gpu_done(int64_t frame_id, int64_t when_ns)
 	auto & frame = get_frame(frame_id);
 	if (frame.frame_id != frame_id or not(frame.wake_up and frame.delivered))
 		return;
+
+	if (parent.timing_log)
+		parent.timing_log->on_app_frame(frame.display_time, frame.wake_up, frame.delivered, when_ns);
 
 	std::lock_guard lock(mutex);
 	cpu_time = lerp0(cpu_time, std::min(3 * period, frame.delivered - frame.wake_up), 0.1);

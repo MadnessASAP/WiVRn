@@ -28,6 +28,7 @@ namespace wivrn
 
 class wivrn_session;
 class app_pacer;
+class frame_timing_log;
 
 class pacing_app_factory : public u_pacing_app_factory
 {
@@ -38,6 +39,9 @@ class pacing_app_factory : public u_pacing_app_factory
 
 public:
 	using base_t = u_pacing_app_factory;
+
+	// Set by the session: receives the application frame times
+	frame_timing_log * timing_log = nullptr;
 
 	pacing_app_factory();
 	xrt_result_t create(struct u_pacing_app ** out_upa);

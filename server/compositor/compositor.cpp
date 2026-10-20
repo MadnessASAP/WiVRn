@@ -326,6 +326,19 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	        .display_time = session.get_offset().to_headset(frame.rendering.predicted_display_time_ns),
 	        .alpha = layer_accum.data.env_blend_mode == XRT_BLEND_MODE_ALPHA_BLEND,
 	};
+	if (auto & log = session.get_timing_log(); log.enabled())
+	{
+		// Views of the projection layer (the application's xrLocateViews for its
+		// display time), or located by the layer squasher for this frame
+		int64_t pose_time = frame.rendering.predicted_display_time_ns;
+		for (const auto & layer: std::span(layer_accum.layers, layer_accum.layer_count))
+			if (layer.data.type == XRT_LAYER_PROJECTION or layer.data.type == XRT_LAYER_PROJECTION_DEPTH)
+			{
+				pose_time = layer.data.timestamp;
+				break;
+			}
+		log.on_frame(images[i].frame_index, view_info.display_time, pose_time, session.get_offset());
+	}
 
 	trace::instant_feedback("begin", frame.rendering.id, os_monotonic_get_ns());
 
@@ -938,6 +951,7 @@ void compositor::on_feedback(const from_headset::feedback & feedback, const cloc
 	if (stream >= encoders.size())
 		return;
 	encoders[stream]->on_feedback(feedback);
+	session.get_timing_log().on_feedback(feedback);
 	if (not o)
 		return;
 	pacer.on_feedback(feedback, o);

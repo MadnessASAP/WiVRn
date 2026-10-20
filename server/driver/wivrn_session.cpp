@@ -101,6 +101,9 @@ wivrn::wivrn_session::wivrn_session(std::unique_ptr<wivrn_connection> connection
         left_hand_interaction(XRT_DEVICE_EXT_HAND_INTERACTION, 0, &hmd, this),
         right_hand_interaction(XRT_DEVICE_EXT_HAND_INTERACTION, 1, &hmd, this)
 {
+	if (timing_log.enabled())
+		app_pacers.timing_log = &timing_log;
+
 	try
 	{
 		audio_handle = audio_device::create(
@@ -592,6 +595,8 @@ static xrt_device_name get_name(interaction_profile profile)
 
 void wivrn_session::operator()(const from_headset::tracking & tracking)
 {
+	timing_log.on_tracking(tracking);
+
 	if (gamepad_device)
 	{
 		gamepad_connected = tracking.interaction_profiles[2] != interaction_profile::none;

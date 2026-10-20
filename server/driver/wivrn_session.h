@@ -22,6 +22,7 @@
 #include "app_pacer.h"
 #include "clock_offset.h"
 #include "compositor/compositor.h"
+#include "compositor/frame_timing_log.h"
 #include "inplace_vector.hpp"
 #include "tracking_control.h"
 #include "utils/thread_safe.h"
@@ -70,6 +71,7 @@ class wivrn_session : public xrt_system_devices
 	thread_safe<from_headset::settings_changed> settings;
 
 	wivrn::compositor compositor;
+	frame_timing_log timing_log;
 	pacing_app_factory app_pacers;
 
 	b_system & xrt_system;
@@ -153,6 +155,10 @@ public:
 		return settings.lock();
 	}
 
+	frame_timing_log & get_timing_log()
+	{
+		return timing_log;
+	}
 	wivrn_hmd & get_hmd()
 	{
 		return hmd;
