@@ -394,12 +394,13 @@ void scenes::stream::gui_frame_synthesis_stats()
 		using result = stream_frame_synthesis::result;
 		ImGui::TextUnformatted(
 		        fmt::format(
-		                "Headset frame synthesis: {} forwarded, {} without data, {} not ready, {} mismatched, {} repeated",
+		                "Headset frame synthesis: {} forwarded, {} without data, {} not ready, {} mismatched, {} repeated, {} not consecutive",
 		                r[size_t(result::forwarded)],
 		                r[size_t(result::no_data)],
 		                r[size_t(result::not_ready)],
 		                r[size_t(result::mismatch)],
-		                r[size_t(result::repeated)])
+		                r[size_t(result::repeated)],
+		                r[size_t(result::not_consecutive)])
 		                .c_str());
 	}
 }

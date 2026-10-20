@@ -287,6 +287,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	{
 		// Send the current application frames to the next client
 		last_layers.clear();
+		last_sent.reset();
 		comp_frame_clear_locked(&frame.rendering);
 		return XRT_SUCCESS;
 	}
@@ -321,6 +322,20 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	}
 	last_layers = std::move(layers);
 	++counters.sent;
+
+	// Application frame shown by the first projection layer
+	int64_t app_display_time = 0;
+	for (const auto & layer: std::span(layer_accum.layers, layer_accum.layer_count))
+		if (layer.data.type == XRT_LAYER_PROJECTION or layer.data.type == XRT_LAYER_PROJECTION_DEPTH)
+		{
+			app_display_time = layer.data.timestamp;
+			// The application's previous frame is known with frame synthesis data
+			if (layer.has_frame_synthesis and layer.fs.previous_display_time_ns and last_sent and
+			    last_sent->app_display_time != layer.fs.previous_display_time_ns)
+				++counters.app_frames_skipped;
+			break;
+		}
+	const auto previous_sent = std::exchange(last_sent, sent_frame{.frame_index = uint64_t(frame.rendering.id), .app_display_time = app_display_time});
 
 #ifdef XRT_FEATURE_RENDERDOC
 	if (auto r = renderdoc())
@@ -465,7 +480,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 
 	cmd.writeTimestamp(vk::PipelineStageFlagBits::eBottomOfPipe, *query_pool, 2);
 
-	record_frame_synthesis(i, frame_synthesis_layer);
+	record_frame_synthesis(i, frame_synthesis_layer, app_display_time, previous_sent);
 
 	for (auto & encoder: encoders)
 	{
@@ -660,7 +675,7 @@ xrt_result_t compositor::get_view_config(
 	return XRT_ERROR_UNSUPPORTED_VIEW_TYPE;
 }
 
-void compositor::record_frame_synthesis(int image_index, const comp_layer * layer)
+void compositor::record_frame_synthesis(int image_index, const comp_layer * layer, int64_t app_display_time, const std::optional<sent_frame> & previous)
 {
 	fs_capture.clear(image_index);
 
@@ -688,7 +703,19 @@ void compositor::record_frame_synthesis(int image_index, const comp_layer * laye
 	const auto & foveation_params = images[image_index].view_info.foveation;
 	const bool foveated = std::ranges::any_of(foveation_params, [](const auto & p) { return p.x.size() > 1 or p.y.size() > 1; });
 
-	fs_capture.record(cmd, image_index, *layer, images[image_index].frame_index, images[image_index].view_info.display_time, foveated);
+	// The motion is relative to the session's previous application frame:
+	// the previous frame sent describes it if it showed that frame
+	const auto & offset = session.get_offset();
+	const int64_t previous_app_display_time = layer->fs.previous_display_time_ns;
+	const frame_synthesis_capture::source_frames source{
+	        .app_display_time = offset.to_headset(app_display_time),
+	        .previous_app_display_time = previous_app_display_time ? offset.to_headset(previous_app_display_time) : 0,
+	        .previous_frame_index = previous and previous_app_display_time and previous->app_display_time == previous_app_display_time
+	                                        ? previous->frame_index
+	                                        : frame_synthesis::no_previous_frame,
+	};
+
+	fs_capture.record(cmd, image_index, *layer, images[image_index].frame_index, images[image_index].view_info.display_time, source, foveated);
 }
 
 std::vector<compositor::layer_id> compositor::get_layer_ids() const
@@ -708,11 +735,12 @@ void compositor::log_counters(int64_t now)
 	if (now - counters.log_time < 10'000'000'000)
 		return;
 	if (counters.log_time)
-		U_LOG_I("Frames: sent %lu, repeated application frames %lu, encoders busy %lu (new application frames %lu)",
+		U_LOG_I("Frames: sent %lu, repeated application frames %lu, encoders busy %lu (new application frames %lu), application frames not sent %lu",
 		        counters.sent,
 		        counters.repeated,
 		        counters.busy_new + counters.busy_repeated,
-		        counters.busy_new);
+		        counters.busy_new,
+		        counters.app_frames_skipped);
 	counters.log_time = now;
 }
 

@@ -38,7 +38,7 @@ namespace wivrn::frame_synthesis
 
 // Bump when the meaning of a field changes, in addition to the automatic
 // hash of the structure layout, see format_hash().
-inline constexpr uint16_t format_version = 1;
+inline constexpr uint16_t format_version = 2;
 
 // Upper bounds enforced by the parser, for both the header fields and the
 // decompressed data.
@@ -110,6 +110,8 @@ enum header_flags : uint8_t
 };
 
 // Per-view metadata, mirrors XrFrameSynthesisInfoEXT semantics.
+inline constexpr uint64_t no_previous_frame = UINT64_MAX;
+
 struct view_header
 {
 	uint16_t version;
@@ -117,6 +119,16 @@ struct view_header
 	uint8_t view_index;   // 0: left, 1: right
 	XrTime display_time;  // headset clock, same as view_info_t::display_time
 	uint8_t flags;        // header_flags
+
+	// Source application frames, headset clock: the display time of the
+	// application frame shown by this frame, and of the application frame
+	// the motion vectors and app_space_delta_pose are relative to (0: none).
+	XrTime app_display_time;
+	XrTime previous_app_display_time;
+	// WiVRn frame index of the previous frame sent to the headset if it
+	// showed that previous application frame, no_previous_frame otherwise:
+	// the motion describes the change from that frame to this one.
+	uint64_t previous_frame_index;
 
 	// XrFrameSynthesisInfoEXT
 	uint64_t layer_flags; // XrFrameSynthesisInfoFlagsEXT

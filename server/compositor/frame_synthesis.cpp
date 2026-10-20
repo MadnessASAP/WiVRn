@@ -266,6 +266,7 @@ bool frame_synthesis_capture::record(vk::raii::CommandBuffer & cmd,
                                      const comp_layer & layer,
                                      uint64_t frame_index,
                                      XrTime display_time,
+                                     const source_frames & source,
                                      bool color_foveated)
 {
 	auto & slot = slots.at(slot_index);
@@ -339,6 +340,9 @@ bool frame_synthesis_capture::record(vk::raii::CommandBuffer & cmd,
 		        .flags = uint8_t(
 		                (color_foveated ? frame_synthesis::color_foveated : 0) |
 		                (width < uint32_t(depth_sub.rect.extent.w) or height < uint32_t(depth_sub.rect.extent.h) ? frame_synthesis::downsampled_closest_depth : 0)),
+		        .app_display_time = source.app_display_time,
+		        .previous_app_display_time = source.previous_app_display_time,
+		        .previous_frame_index = source.previous_frame_index,
 		        .layer_flags = fs.flags,
 		        .motion_vector_scale = {fs.motion_vector_scale.x, fs.motion_vector_scale.y, fs.motion_vector_scale.z},
 		        .motion_vector_offset = {fs.motion_vector_offset.x, fs.motion_vector_offset.y, fs.motion_vector_offset.z},

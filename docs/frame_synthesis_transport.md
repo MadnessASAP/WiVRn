@@ -196,10 +196,12 @@ auxiliary data if its header matches the above; other shards continue the previo
 
 | Field | Meaning |
 |---|---|
-| `version` | `frame_synthesis::format_version`, currently 1 |
+| `version` | `frame_synthesis::format_version`, currently 2 |
 | `frame_index` | WiVRn frame index, identical to the video shards `frame_idx` |
 | `view_index` | 0 left, 1 right, identical to the stream index |
 | `display_time` | headset clock, identical to `view_info_t::display_time` |
+| `app_display_time`, `previous_app_display_time` | headset clock: display time of the application frame shown, and of the application frame the motion is relative to (the session's previous `xrEndFrame`, 0 if none) |
+| `previous_frame_index` | WiVRn frame index of the previous frame sent if it showed that previous application frame, else `no_previous_frame` (`UINT64_MAX`): the motion describes the change from that frame to this one |
 | `flags` | `color_foveated`: colour pixels are not linearly mapped to the view; `downsampled_closest_depth` |
 | `layer_flags` | `XrFrameSynthesisInfoEXT::layerFlags` unmodified (2D motion bit, relaxed frame interval bit) |
 | `motion_vector_scale`, `motion_vector_offset` | xyz of the OpenXR values, full precision (w is ignored by the specification) |
@@ -307,6 +309,12 @@ The frame period is 8.3 ms at 120 Hz and 11.1 ms at 90 Hz: the CPU path only fit
   (4096 pixels per side, 8 MiB per payload, 16 MiB per blob), invalid depth range or near/far,
   non-finite parameters, corrupted zstd data, frame index or view index different from the
   frame it arrived with.
+* The server does not send a frame whose layers all show the same application frames as the
+  last frame sent (the application did not submit a new frame in time), so frame indices have
+  gaps. The headset resubmits its last frame, except in headset frame synthesis mode once data
+  was forwarded: it then submits no frame, so the runtime synthesizes the missing ones from the
+  forwarded data (Quest: Application SpaceWarp, in its half rate mode). For tests,
+  `debug.wivrn.discard_repeated_frames true` discards in all modes.
 * Not sent by the server: data larger than `max-view-kib` for an eye (default 2 MiB), frames
   with several layers, unsupported formats.
 
@@ -354,8 +362,11 @@ The frame period is 8.3 ms at 120 Hz and 11.1 ms at 90 Hz: the CPU path only fit
   `XrFrameSynthesisInfoEXT` is chained to each view of the stream projection layer: the header
   values, `appSpaceDeltaPose` converted to the layer space (`L·D·L⁻¹` with `layer_space_pose`),
   without `REQUEST_RELAXED_FRAME_INTERVAL` (the stream drives the frame rate). Other frames are
-  submitted without it. Counters (forwarded, no data, not ready, mismatch, repeated) are logged
-  every 10 s and shown in the statistics tab. For tests, `adb shell setprop
+  submitted without it, also when `previous_frame_index` is not the last colour frame submitted
+  for the first time (a frame was dropped in between, or the motion is not relative to it):
+  the runtime then would apply the motion over the wrong interval. Counters (forwarded, no
+  data, not ready, mismatch, repeated, not consecutive) are logged every 10 s and shown in the
+  statistics tab. For tests, `adb shell setprop
   debug.wivrn.frame_synthesis_override off|receive|runtime` overrides the setting and
   `debug.wivrn.frame_synthesis_flip_y true` negates the Y component of the motion vectors.
 * Debugging real data: run the server with `WIVRN_DUMP_VIDEO=/tmp/stream`, then

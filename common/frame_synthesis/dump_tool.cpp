@@ -156,10 +156,13 @@ static void process(const std::vector<uint8_t> & blob, const char * prefix, size
 	}
 
 	std::cout << std::format(
-	        "frame {} view {} {}x{} (source depth {}x{} fmt {}, motion {}x{} fmt {}, color {}x{}) flags {:#x} layer_flags {:#x} "
+	        "frame {} view {} app {} previous app {} previous frame {} {}x{} (source depth {}x{} fmt {}, motion {}x{} fmt {}, color {}x{}) flags {:#x} layer_flags {:#x} "
 	        "depth [{}, {}] near {} far {} values [{}, {}] max |mv.xy| {} bytes {} (motion {} depth {})\n",
 	        h.frame_index,
 	        h.view_index,
+	        h.app_display_time,
+	        h.previous_app_display_time,
+	        h.previous_frame_index == no_previous_frame ? std::string("none") : std::to_string(h.previous_frame_index),
 	        w,
 	        ht,
 	        h.depth.source_width,

@@ -411,7 +411,7 @@ void settings_streaming(const settings_context & ctx)
 	list.push_back({
 	        .id = "##frame_synthesis",
 	        .label = _C("setting name", "Depth and motion vectors"),
-	        .description = _("Experimental: also receive the depth and motion vector images of applications that provide them (XR_EXT_frame_synthesis). Requires H.264 or H.265 and uses additional bandwidth. The headset can use them to synthesize frames when a frame is late."),
+	        .description = _("Experimental: also receive the depth and motion vector images of applications that provide them (XR_EXT_frame_synthesis). Requires H.264 or H.265 and uses additional bandwidth. With headset frame synthesis, the headset synthesizes the frames the application did not render in time: smoother motion, with some visual artifacts."),
 	        .ui = ui_kind::combo,
 	        .get_int = [&config, frame_synthesis_modes] { return index(frame_synthesis_modes, config.frame_synthesis).value_or(1); },
 	        .set_int = [&ctx, &config, frame_synthesis_modes](int v) {

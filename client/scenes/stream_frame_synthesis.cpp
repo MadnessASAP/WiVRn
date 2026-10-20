@@ -366,7 +366,7 @@ stream_frame_synthesis::stream_frame_synthesis(
 	}
 }
 
-stream_frame_synthesis::result stream_frame_synthesis::check(const std::array<std::shared_ptr<frame>, view_count> & frames, bool repeated)
+stream_frame_synthesis::result stream_frame_synthesis::check(const std::array<std::shared_ptr<frame>, view_count> & frames, bool repeated, std::optional<uint64_t> previous_frame)
 {
 	for (const auto & f: frames)
 	{
@@ -387,6 +387,15 @@ stream_frame_synthesis::result stream_frame_synthesis::check(const std::array<st
 	{
 		if (f->status() != frame::state::ready)
 			return result::not_ready;
+	}
+
+	// The runtime takes the motion as relative to the previous image it got
+	// (the header is valid once the frame is ready)
+	for (const auto & f: frames)
+	{
+		if (f->header.previous_frame_index != previous_frame.value_or(wivrn::frame_synthesis::no_previous_frame) or
+		    f->header.previous_frame_index == wivrn::frame_synthesis::no_previous_frame)
+			return result::not_consecutive;
 	}
 
 	return result::forwarded;

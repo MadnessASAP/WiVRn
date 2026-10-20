@@ -106,6 +106,15 @@ public:
 		return config.enabled;
 	}
 
+	// Application frames of a captured frame, headset clock, see
+	// frame_synthesis::view_header
+	struct source_frames
+	{
+		XrTime app_display_time = 0;
+		XrTime previous_app_display_time = 0;
+		uint64_t previous_frame_index = frame_synthesis::no_previous_frame;
+	};
+
 	// Record the copy of the frame synthesis images of layer into the slot
 	// buffer. Clears the slot and returns false when the layer cannot be
 	// transported (no data, unsupported formats...).
@@ -115,6 +124,7 @@ public:
 	            const comp_layer & layer,
 	            uint64_t frame_index,
 	            XrTime display_time,
+	            const source_frames & source,
 	            bool color_foveated);
 
 	void clear(size_t slot_index);

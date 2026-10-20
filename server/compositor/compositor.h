@@ -36,6 +36,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -131,13 +132,23 @@ private:
 	};
 	std::vector<layer_id> last_layers;
 
+	// Last frame sent and the display time of its application frame (server
+	// clock, 0: none), for the frame synthesis data of the next one
+	struct sent_frame
+	{
+		uint64_t frame_index = 0;
+		int64_t app_display_time = 0;
+	};
+	std::optional<sent_frame> last_sent;
+
 	// Frames committed by the multi compositor, logged every 10 s
 	struct frame_counters
 	{
 		uint64_t sent = 0;
-		uint64_t repeated = 0;      // same application frames as the last sent
-		uint64_t busy_new = 0;      // encoders busy, new application frames
-		uint64_t busy_repeated = 0; // encoders busy, same application frames
+		uint64_t repeated = 0;           // same application frames as the last sent
+		uint64_t busy_new = 0;           // encoders busy, new application frames
+		uint64_t busy_repeated = 0;      // encoders busy, same application frames
+		uint64_t app_frames_skipped = 0; // sent frames whose previous application frame was not sent
 		int64_t log_time = 0;
 	} counters;
 	std::vector<layer_id> get_layer_ids() const;
@@ -190,7 +201,7 @@ private:
 
 	int acquire_image();
 
-	void record_frame_synthesis(int image_index, const comp_layer * layer);
+	void record_frame_synthesis(int image_index, const comp_layer * layer, int64_t app_display_time, const std::optional<sent_frame> & previous);
 
 	void encoder_work(std::stop_token);
 

@@ -1,18 +1,21 @@
-From 66eff2f66a352ae5850d56056f387c2c6ebada41 Mon Sep 17 00:00:00 2001
+From 9e36226ba4cfc2ceeddad3440fa38ef87c933290 Mon Sep 17 00:00:00 2001
 From: "Michael \"ASAP\" Weinrich" <michael@a5ap.net>
 Date: Sat, 17 Oct 2026 18:35:46 -0300
 Subject: [PATCH] st/oxr: add XR_EXT_frame_synthesis plumbing
 
 Validate XrFrameSynthesisInfoEXT chained to projection views and forward
 the motion vector and depth swapchains, together with scale/offset,
-appSpaceDeltaPose, the layer space pose and the depth range, through a new
-optional xrt_compositor::layer_frame_synthesis call that attaches the data
-to the last submitted projection layer.
+appSpaceDeltaPose, the layer space pose, the depth range and the display
+time of the session's previous frame (the one the motion is relative to),
+through a new optional xrt_compositor::layer_frame_synthesis call that
+attaches the data to the last submitted projection layer.
 
 The data travels through the Vulkan client compositor, IPC and the
 multi compositor, and is accumulated by comp_base. Compositors that do
 not implement the call drop the data. XrFrameSynthesisConfigViewEXT
-recommends the color resolution.
+recommends the size given by the system compositor
+(xrt_view_config_properties::recommended_motion_vector), or the color
+resolution.
 
 The extension is behind XRT_FEATURE_OPENXR_FRAME_SYNTHESIS (default OFF)
 as the main compositor does not consume the data.
@@ -26,16 +29,16 @@ as the main compositor does not consume the data.
  src/xrt/compositor/util/comp_base.c           |  11 +
  src/xrt/compositor/util/comp_layer_accum.c    |  43 +++
  src/xrt/compositor/util/comp_layer_accum.h    |  48 +++-
- src/xrt/include/xrt/xrt_compositor.h          | 112 ++++++++
+ src/xrt/include/xrt/xrt_compositor.h          | 120 ++++++++
  .../include/xrt/xrt_config_build.h.cmake_in   |   1 +
  src/xrt/ipc/client/ipc_client_compositor.c    |  36 +++
  src/xrt/ipc/server/ipc_server_handler.c       |  50 ++++
  src/xrt/ipc/shared/ipc_protocol.h             |  15 +-
  .../oxr_extension_support.py                  |   1 +
- src/xrt/state_trackers/oxr/oxr_objects.h      |   3 +
- .../oxr/oxr_session_frame_end.c               | 256 ++++++++++++++++++
+ src/xrt/state_trackers/oxr/oxr_objects.h      |   8 +
+ .../oxr/oxr_session_frame_end.c               | 261 ++++++++++++++++++
  src/xrt/state_trackers/oxr/oxr_system.c       |  30 +-
- 18 files changed, 693 insertions(+), 11 deletions(-)
+ 18 files changed, 711 insertions(+), 11 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index f24211755..91b73210f 100644
@@ -428,10 +431,10 @@ index 58ac8e2cb..79e7db853 100644
   * Accumulate swapchain and data for a quad layer for a frame.
   *
 diff --git a/src/xrt/include/xrt/xrt_compositor.h b/src/xrt/include/xrt/xrt_compositor.h
-index 3d8242540..bd707cdeb 100644
+index 3d8242540..983a794dc 100644
 --- a/src/xrt/include/xrt/xrt_compositor.h
 +++ b/src/xrt/include/xrt/xrt_compositor.h
-@@ -431,6 +431,71 @@ struct xrt_layer_passthrough_data
+@@ -431,6 +431,79 @@ struct xrt_layer_passthrough_data
  	struct xrt_passthrough_layer xrt_pl;
  };
  
@@ -496,6 +499,14 @@ index 3d8242540..bd707cdeb 100644
 + */
 +struct xrt_layer_frame_synthesis_data
 +{
++	/*!
++	 * Display time (@ref xrt_layer_frame_data::display_time_ns) of the
++	 * session's previous committed frame, the one the motion vectors and
++	 * @ref xrt_layer_frame_synthesis_view_data::app_space_delta_pose are
++	 * relative to; 0 if there was none.
++	 */
++	int64_t previous_display_time_ns;
++
 +	uint32_t view_count;
 +	struct xrt_layer_frame_synthesis_view_data v[XRT_MAX_VIEWS];
 +};
@@ -503,7 +514,7 @@ index 3d8242540..bd707cdeb 100644
  /*!
   * All the pure data values associated with a composition layer.
   *
-@@ -1395,6 +1460,23 @@ struct xrt_compositor
+@@ -1395,6 +1468,23 @@ struct xrt_compositor
  	                                  struct xrt_device *xdev,
  	                                  const struct xrt_layer_data *data);
  
@@ -527,7 +538,7 @@ index 3d8242540..bd707cdeb 100644
  	/*!
  	 * @brief Commits all of the submitted layers.
  	 *
-@@ -1871,6 +1953,26 @@ xrt_comp_layer_passthrough(struct xrt_compositor *xc, struct xrt_device *xdev, c
+@@ -1871,6 +1961,26 @@ xrt_comp_layer_passthrough(struct xrt_compositor *xc, struct xrt_device *xdev, c
  	return xc->layer_passthrough(xc, xdev, data);
  }
  
@@ -554,7 +565,7 @@ index 3d8242540..bd707cdeb 100644
  /*!
   * @copydoc xrt_compositor::layer_commit
   *
-@@ -2292,6 +2394,16 @@ struct xrt_view_config_properties
+@@ -2292,6 +2402,16 @@ struct xrt_view_config_properties
  		uint32_t height_pixels;
  		uint32_t sample_count;
  	} max; //!< Maximums for this view.
@@ -784,7 +795,7 @@ index 12b54fec4..001491029 100644
      ['XR_EXT_hand_interaction', 'XRT_FEATURE_OPENXR_INTERACTION_EXT_HAND'],
      ['XR_EXT_hand_tracking', 'XRT_FEATURE_OPENXR_HAND_TRACKING_EXT'],
 diff --git a/src/xrt/state_trackers/oxr/oxr_objects.h b/src/xrt/state_trackers/oxr/oxr_objects.h
-index c8fbdadcd..9251b4fe3 100644
+index c8fbdadcd..cabf8a1f8 100644
 --- a/src/xrt/state_trackers/oxr/oxr_objects.h
 +++ b/src/xrt/state_trackers/oxr/oxr_objects.h
 @@ -1064,6 +1064,9 @@ struct oxr_view_config_properties
@@ -797,8 +808,20 @@ index c8fbdadcd..9251b4fe3 100644
  	uint32_t blend_mode_count;
  	XrEnvironmentBlendMode blend_modes[3];
  };
+@@ -1376,6 +1379,11 @@ struct oxr_session
+ 		int64_t begun;
+ 	} frame_id;
+ 
++#ifdef OXR_HAVE_EXT_frame_synthesis
++	//! Display time of the last committed frame, for XR_EXT_frame_synthesis.
++	int64_t frame_synthesis_previous_display_time_ns;
++#endif
++
+ 	struct oxr_frame_sync frame_sync;
+ 
+ 	/*!
 diff --git a/src/xrt/state_trackers/oxr/oxr_session_frame_end.c b/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
-index 5bc5d81fb..f670d68fa 100644
+index 5bc5d81fb..8273c7e18 100644
 --- a/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
 +++ b/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
 @@ -34,6 +34,7 @@
@@ -1011,7 +1034,7 @@ index 5bc5d81fb..f670d68fa 100644
  	return XR_SUCCESS;
  }
  
-@@ -1352,6 +1527,81 @@ submit_quad_layer(struct oxr_session *sess,
+@@ -1352,6 +1527,82 @@ submit_quad_layer(struct oxr_session *sess,
  	return XR_SUCCESS;
  }
  
@@ -1042,6 +1065,7 @@ index 5bc5d81fb..f670d68fa 100644
 +		return;
 +	}
 +
++	fs.previous_display_time_ns = sess->frame_synthesis_previous_display_time_ns;
 +	fs.view_count = proj->viewCount;
 +	for (uint32_t i = 0; i < proj->viewCount; ++i) {
 +		const XrFrameSynthesisInfoEXT *fs_info = OXR_GET_INPUT_FROM_CHAIN(
@@ -1093,7 +1117,7 @@ index 5bc5d81fb..f670d68fa 100644
  static XrResult
  submit_projection_layer(struct oxr_session *sess,
                          struct xrt_compositor *xc,
-@@ -1462,6 +1712,12 @@ submit_projection_layer(struct oxr_session *sess,
+@@ -1462,6 +1713,12 @@ submit_projection_layer(struct oxr_session *sess,
  		OXR_CHECK_XRET(log, sess, xret, xrt_comp_layer_projection);
  	}
  
@@ -1105,6 +1129,17 @@ index 5bc5d81fb..f670d68fa 100644
 +
  	return XR_SUCCESS;
  }
+ 
+@@ -1990,6 +2247,10 @@ oxr_session_frame_end(struct oxr_logger *log, struct oxr_session *sess, const Xr
+ 	xret = xrt_comp_layer_commit(xc, XRT_GRAPHICS_SYNC_HANDLE_INVALID);
+ 	OXR_CHECK_XRET(log, sess, xret, xrt_comp_layer_commit);
+ 
++#ifdef OXR_HAVE_EXT_frame_synthesis
++	sess->frame_synthesis_previous_display_time_ns = xrt_display_time_ns;
++#endif
++
+ 	sess->frame_id.begun = -1;
+ 	sess->frame_started = false;
  
 diff --git a/src/xrt/state_trackers/oxr/oxr_system.c b/src/xrt/state_trackers/oxr/oxr_system.c
 index b29db63c6..f94fbac57 100644

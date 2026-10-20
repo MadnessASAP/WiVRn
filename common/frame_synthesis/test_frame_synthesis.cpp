@@ -105,6 +105,9 @@ static view_header make_header(const sample_images & s, depth_format df)
 	h.frame_index = 1234;
 	h.view_index = 1;
 	h.display_time = 987654321;
+	h.app_display_time = 987000000;
+	h.previous_app_display_time = 975888889;
+	h.previous_frame_index = 1233;
 	h.layer_flags = 1;
 	h.motion_vector_scale = {1, 1, 1};
 	h.motion_vector_offset = {0, 0, 0};
@@ -208,6 +211,9 @@ static void test_frame(const sample_images & s)
 		auto parsed = parse(blob);
 		CHECK(parsed.header.frame_index == 1234);
 		CHECK(parsed.header.view_index == 1);
+		CHECK(parsed.header.app_display_time == 987000000);
+		CHECK(parsed.header.previous_app_display_time == 975888889);
+		CHECK(parsed.header.previous_frame_index == 1233);
 		CHECK(std::isinf(parsed.header.far_z));
 		CHECK(parsed.header.depth_encoding == df);
 

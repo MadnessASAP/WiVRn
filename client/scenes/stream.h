@@ -106,6 +106,8 @@ private:
 	bool runtime_frame_synthesis_failed = false;
 	std::array<uint64_t, stream_frame_synthesis::result_count> runtime_frame_synthesis_results{};
 	XrTime runtime_frame_synthesis_log_time = 0;
+	// Frame index of the last colour image submitted for the first time
+	std::optional<uint64_t> runtime_frame_synthesis_previous_frame;
 	void log_runtime_frame_synthesis(XrTime now);
 
 	vk::raii::Fence fence = nullptr;

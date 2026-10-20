@@ -1035,10 +1035,12 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		}
 	}
 
-	// When no new frame arrived, submit the last one again, or let the
-	// headset time warp it
+	// When no new frame arrived, submit the last one again, or let the runtime
+	// synthesize a frame when it receives the frame synthesis data
+	const bool discard_repeated = application::get_hmd_traits().discard_repeated_frames or
+	                              (runtime_frame_synthesis and application::get_config().get_frame_synthesis_mode() == frame_synthesis_mode::runtime);
 	if ((not application::get_hmd_traits().discard_frame) or
-	    (not application::get_hmd_traits().discard_repeated_frames) or
+	    (not discard_repeated) or
 	    std::ranges::any_of(current_blit_handles, [](const auto & h) { return h and h->feedback.times_displayed < 2; }) or
 	    is_gui_interactable())
 	{
@@ -1119,16 +1121,25 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		    not runtime_frame_synthesis_failed)
 		{
 			bool repeated = false;
+			std::optional<uint64_t> frame_index;
 			for (size_t i = 0; i < view_count; ++i)
 			{
 				if (const auto & handle = current_blit_handles[i])
 				{
 					frame_synthesis_frames[i] = handle->frame_synthesis;
 					repeated |= handle->feedback.times_displayed > 1;
+					if (i == 0)
+						frame_index = handle->feedback.frame_index;
+					else if (frame_index != handle->feedback.frame_index)
+						frame_index.reset();
 				}
+				else
+					frame_index.reset();
 			}
 
-			const auto result = stream_frame_synthesis::check(frame_synthesis_frames, repeated);
+			const auto result = stream_frame_synthesis::check(frame_synthesis_frames, repeated, runtime_frame_synthesis_previous_frame);
+			if (not repeated)
+				runtime_frame_synthesis_previous_frame = frame_index;
 			if (result == stream_frame_synthesis::result::forwarded and not runtime_frame_synthesis)
 			{
 				try
@@ -1392,12 +1403,13 @@ void scenes::stream::log_runtime_frame_synthesis(XrTime now)
 
 	const auto & r = runtime_frame_synthesis_results;
 	using result = stream_frame_synthesis::result;
-	spdlog::info("Runtime frame synthesis: forwarded {}, no data {}, not ready {}, mismatch {}, repeated {}",
+	spdlog::info("Runtime frame synthesis: forwarded {}, no data {}, not ready {}, mismatch {}, repeated {}, not consecutive {}",
 	             r[size_t(result::forwarded)],
 	             r[size_t(result::no_data)],
 	             r[size_t(result::not_ready)],
 	             r[size_t(result::mismatch)],
-	             r[size_t(result::repeated)]);
+	             r[size_t(result::repeated)],
+	             r[size_t(result::not_consecutive)]);
 }
 
 void scenes::stream::setup_reprojection_swapchain(uint32_t swapchain_width, uint32_t swapchain_height)

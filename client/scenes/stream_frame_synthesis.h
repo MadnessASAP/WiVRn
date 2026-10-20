@@ -50,12 +50,13 @@ public:
 	enum class result
 	{
 		forwarded,
-		no_data,   // a view has no frame synthesis data
-		not_ready, // decoding is not complete or failed
-		mismatch,  // the views belong to different frames
-		repeated,  // the colour image was already submitted
+		no_data,         // a view has no frame synthesis data
+		not_ready,       // decoding is not complete or failed
+		mismatch,        // the views belong to different frames
+		repeated,        // the colour image was already submitted
+		not_consecutive, // the motion is not relative to the previous colour image submitted
 	};
-	static constexpr size_t result_count = 5;
+	static constexpr size_t result_count = 6;
 
 private:
 	vk::raii::Device & device;
@@ -94,8 +95,9 @@ public:
 	stream_frame_synthesis & operator=(const stream_frame_synthesis &) = delete;
 
 	// Whether the data of both views can be forwarded with a colour image
-	// submitted for the first time (repeated = false)
-	static result check(const std::array<std::shared_ptr<frame>, view_count> & frames, bool repeated);
+	// submitted for the first time (repeated = false). previous_frame is the
+	// frame index of the last colour image submitted for the first time.
+	static result check(const std::array<std::shared_ptr<frame>, view_count> & frames, bool repeated, std::optional<uint64_t> previous_frame);
 
 	// Acquire the swapchain images and record the copy of both views, the
 	// frames must have passed check(). The submission must wait for the
