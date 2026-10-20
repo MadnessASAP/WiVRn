@@ -363,9 +363,10 @@ void scenes::stream::gui_performance_metrics()
 	}
 }
 
+// The caller (render(), through draw_gui()) holds decoder_mutex: locking it
+// again could deadlock with a waiting writer (setup())
 void scenes::stream::gui_frame_synthesis_stats()
 {
-	std::shared_lock lock(decoder_mutex);
 	for (size_t i = 0; i < view_count; ++i)
 	{
 		if (not decoders[i].decoder)
