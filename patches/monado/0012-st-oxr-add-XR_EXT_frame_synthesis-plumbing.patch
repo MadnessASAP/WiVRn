@@ -1,4 +1,4 @@
-From 3276910f6323f7bf6a1247fd2c8ea3925f58dca0 Mon Sep 17 00:00:00 2001
+From 66eff2f66a352ae5850d56056f387c2c6ebada41 Mon Sep 17 00:00:00 2001
 From: "Michael \"ASAP\" Weinrich" <michael@a5ap.net>
 Date: Sat, 17 Oct 2026 18:35:46 -0300
 Subject: [PATCH] st/oxr: add XR_EXT_frame_synthesis plumbing
@@ -26,15 +26,16 @@ as the main compositor does not consume the data.
  src/xrt/compositor/util/comp_base.c           |  11 +
  src/xrt/compositor/util/comp_layer_accum.c    |  43 +++
  src/xrt/compositor/util/comp_layer_accum.h    |  48 +++-
- src/xrt/include/xrt/xrt_compositor.h          | 102 +++++++
+ src/xrt/include/xrt/xrt_compositor.h          | 112 ++++++++
  .../include/xrt/xrt_config_build.h.cmake_in   |   1 +
  src/xrt/ipc/client/ipc_client_compositor.c    |  36 +++
  src/xrt/ipc/server/ipc_server_handler.c       |  50 ++++
  src/xrt/ipc/shared/ipc_protocol.h             |  15 +-
  .../oxr_extension_support.py                  |   1 +
- .../oxr/oxr_session_frame_end.c               | 255 ++++++++++++++++++
- src/xrt/state_trackers/oxr/oxr_system.c       |  19 +-
- 17 files changed, 668 insertions(+), 11 deletions(-)
+ src/xrt/state_trackers/oxr/oxr_objects.h      |   3 +
+ .../oxr/oxr_session_frame_end.c               | 256 ++++++++++++++++++
+ src/xrt/state_trackers/oxr/oxr_system.c       |  30 +-
+ 18 files changed, 693 insertions(+), 11 deletions(-)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index f24211755..91b73210f 100644
@@ -427,7 +428,7 @@ index 58ac8e2cb..79e7db853 100644
   * Accumulate swapchain and data for a quad layer for a frame.
   *
 diff --git a/src/xrt/include/xrt/xrt_compositor.h b/src/xrt/include/xrt/xrt_compositor.h
-index 3d8242540..a30adb212 100644
+index 3d8242540..bd707cdeb 100644
 --- a/src/xrt/include/xrt/xrt_compositor.h
 +++ b/src/xrt/include/xrt/xrt_compositor.h
 @@ -431,6 +431,71 @@ struct xrt_layer_passthrough_data
@@ -553,6 +554,23 @@ index 3d8242540..a30adb212 100644
  /*!
   * @copydoc xrt_compositor::layer_commit
   *
+@@ -2292,6 +2394,16 @@ struct xrt_view_config_properties
+ 		uint32_t height_pixels;
+ 		uint32_t sample_count;
+ 	} max; //!< Maximums for this view.
++
++	/*!
++	 * Recommended motion vector and depth image size for XR_EXT_frame_synthesis,
++	 * zero to use the recommended image size.
++	 */
++	struct
++	{
++		uint32_t width_pixels;
++		uint32_t height_pixels;
++	} recommended_motion_vector;
+ };
+ 
+ struct xrt_view_config
 diff --git a/src/xrt/include/xrt/xrt_config_build.h.cmake_in b/src/xrt/include/xrt/xrt_config_build.h.cmake_in
 index 81c547b90..44b4ce67a 100644
 --- a/src/xrt/include/xrt/xrt_config_build.h.cmake_in
@@ -765,8 +783,22 @@ index 12b54fec4..001491029 100644
      ['XR_EXT_future', 'XRT_FEATURE_OPENXR_FUTURE_EXT'],
      ['XR_EXT_hand_interaction', 'XRT_FEATURE_OPENXR_INTERACTION_EXT_HAND'],
      ['XR_EXT_hand_tracking', 'XRT_FEATURE_OPENXR_HAND_TRACKING_EXT'],
+diff --git a/src/xrt/state_trackers/oxr/oxr_objects.h b/src/xrt/state_trackers/oxr/oxr_objects.h
+index c8fbdadcd..9251b4fe3 100644
+--- a/src/xrt/state_trackers/oxr/oxr_objects.h
++++ b/src/xrt/state_trackers/oxr/oxr_objects.h
+@@ -1064,6 +1064,9 @@ struct oxr_view_config_properties
+ 	uint32_t view_count;
+ 	XrViewConfigurationView views[XRT_MAX_COMPOSITOR_VIEW_CONFIGS_VIEW_COUNT];
+ 
++	//! XR_EXT_frame_synthesis recommended motion vector image size, zero: recommended image size.
++	XrExtent2Di recommended_motion_vector[XRT_MAX_COMPOSITOR_VIEW_CONFIGS_VIEW_COUNT];
++
+ 	uint32_t blend_mode_count;
+ 	XrEnvironmentBlendMode blend_modes[3];
+ };
 diff --git a/src/xrt/state_trackers/oxr/oxr_session_frame_end.c b/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
-index 5bc5d81fb..88e3271f3 100644
+index 5bc5d81fb..f670d68fa 100644
 --- a/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
 +++ b/src/xrt/state_trackers/oxr/oxr_session_frame_end.c
 @@ -34,6 +34,7 @@
@@ -1061,7 +1093,7 @@ index 5bc5d81fb..88e3271f3 100644
  static XrResult
  submit_projection_layer(struct oxr_session *sess,
                          struct xrt_compositor *xc,
-@@ -1462,6 +1711,12 @@ submit_projection_layer(struct oxr_session *sess,
+@@ -1462,6 +1712,12 @@ submit_projection_layer(struct oxr_session *sess,
  		OXR_CHECK_XRET(log, sess, xret, xrt_comp_layer_projection);
  	}
  
@@ -1075,10 +1107,24 @@ index 5bc5d81fb..88e3271f3 100644
  }
  
 diff --git a/src/xrt/state_trackers/oxr/oxr_system.c b/src/xrt/state_trackers/oxr/oxr_system.c
-index b29db63c6..b23e8ccab 100644
+index b29db63c6..f94fbac57 100644
 --- a/src/xrt/state_trackers/oxr/oxr_system.c
 +++ b/src/xrt/state_trackers/oxr/oxr_system.c
-@@ -923,6 +923,21 @@ oxr_system_enumerate_view_conf_views(struct oxr_logger *log,
+@@ -147,6 +147,13 @@ fill_in_view_config_properties(struct oxr_logger *log,
+ 	fill_in_view_config_properties_view_config_type(props, view_config->view_type);
+ 	fill_in_view_config_properties_views(log, props->views, view_config);
+ 	props->view_count = view_config->view_count;
++
++	for (uint32_t i = 0; i < view_config->view_count; ++i) {
++		props->recommended_motion_vector[i] = (XrExtent2Di){
++		    .width = (int32_t)view_config->views[i].recommended_motion_vector.width_pixels,
++		    .height = (int32_t)view_config->views[i].recommended_motion_vector.height_pixels,
++		};
++	}
+ }
+ 
+ static void
+@@ -923,6 +930,25 @@ oxr_system_enumerate_view_conf_views(struct oxr_logger *log,
  		return oxr_error(log, XR_ERROR_RUNTIME_FAILURE, "Didn't find view configs");
  	}
  
@@ -1093,9 +1139,13 @@ index b29db63c6..b23e8ccab 100644
 +		XrFrameSynthesisConfigViewEXT *fs_view = OXR_GET_OUTPUT_FROM_CHAIN(
 +		    &views[i], XR_TYPE_FRAME_SYNTHESIS_CONFIG_VIEW_EXT, XrFrameSynthesisConfigViewEXT);
 +		if (fs_view != NULL && sys->inst->extensions.EXT_frame_synthesis) {
-+			// The compositor decides on the transmitted resolution, recommend full resolution.
-+			fs_view->recommendedMotionVectorImageRectWidth = props->views[i].recommendedImageRectWidth;
-+			fs_view->recommendedMotionVectorImageRectHeight = props->views[i].recommendedImageRectHeight;
++			// The compositor decides on the transmitted resolution, default to full resolution.
++			const XrExtent2Di mv_size = props->recommended_motion_vector[i];
++			const bool has_mv_size = mv_size.width > 0 && mv_size.height > 0;
++			fs_view->recommendedMotionVectorImageRectWidth =
++			    has_mv_size ? (uint32_t)mv_size.width : props->views[i].recommendedImageRectWidth;
++			fs_view->recommendedMotionVectorImageRectHeight =
++			    has_mv_size ? (uint32_t)mv_size.height : props->views[i].recommendedImageRectHeight;
 +		}
 +#endif
 +	}

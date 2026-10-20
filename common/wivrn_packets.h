@@ -365,6 +365,10 @@ struct headset_info_packet
 	// frame_synthesis::format_hash() of the supported auxiliary frame
 	// format carried in SEI of h264/h265 streams, 0 if unsupported
 	uint64_t frame_synthesis_format = 0;
+	// Recommended motion vector image size of the headset runtime's
+	// XR_EXT_frame_synthesis, advertised to applications, 0 if unknown
+	uint16_t frame_synthesis_motion_vector_width = 0;
+	uint16_t frame_synthesis_motion_vector_height = 0;
 	std::string system_name;
 
 	// Used for the application list

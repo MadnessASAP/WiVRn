@@ -376,6 +376,21 @@ std::vector<XrViewConfigurationView> xr::system::view_configuration_views(XrView
 	return details::enumerate<XrViewConfigurationView>(xrEnumerateViewConfigurationViews, *inst, id, type);
 }
 
+std::vector<XrFrameSynthesisConfigViewEXT> xr::system::frame_synthesis_config_views(XrViewConfigurationType type) const
+{
+	uint32_t count = 0;
+	CHECK_XR(xrEnumerateViewConfigurationViews(*inst, id, type, 0, &count, nullptr));
+
+	std::vector<XrViewConfigurationView> views(count, {.type = XR_TYPE_VIEW_CONFIGURATION_VIEW});
+	std::vector<XrFrameSynthesisConfigViewEXT> frame_synthesis_views(count, {.type = XR_TYPE_FRAME_SYNTHESIS_CONFIG_VIEW_EXT});
+	for (uint32_t i = 0; i < count; ++i)
+		views[i].next = &frame_synthesis_views[i];
+
+	CHECK_XR(xrEnumerateViewConfigurationViews(*inst, id, type, count, &count, views.data()));
+	frame_synthesis_views.resize(count);
+	return frame_synthesis_views;
+}
+
 std::vector<XrEnvironmentBlendMode> xr::system::environment_blend_modes(XrViewConfigurationType type) const
 {
 	return details::enumerate<XrEnvironmentBlendMode>(xrEnumerateEnvironmentBlendModes, *inst, id, type);

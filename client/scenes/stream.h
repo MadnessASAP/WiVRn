@@ -28,6 +28,7 @@
 #include "scene.h"
 #include "scenes/input_profile.h"
 #include "stream_defoveator.h"
+#include "stream_frame_synthesis.h"
 #include "utils/thread_safe.h"
 #include "wifi_lock.h"
 #include "wivrn_client.h"
@@ -99,6 +100,13 @@ private:
 	// Frame index of the last frame selected by common_frame() (render thread,
 	// reset by setup() with decoder_mutex held exclusively)
 	uint64_t last_common_frame = 0;
+
+	// Forwarding of the frame synthesis data to the runtime, created on first use
+	std::unique_ptr<stream_frame_synthesis> runtime_frame_synthesis;
+	bool runtime_frame_synthesis_failed = false;
+	std::array<uint64_t, stream_frame_synthesis::result_count> runtime_frame_synthesis_results{};
+	XrTime runtime_frame_synthesis_log_time = 0;
+	void log_runtime_frame_synthesis(XrTime now);
 
 	vk::raii::Fence fence = nullptr;
 	vk::raii::CommandBuffer command_buffer = nullptr;

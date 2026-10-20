@@ -150,7 +150,7 @@ Default value: `true`
 
 Experimental. Controls the transmission of the depth and motion vector images that applications
 submit with `XR_EXT_frame_synthesis`. They are only sent when the headset enabled
-"Receive depth and motion vectors", the stream uses H.264 or H.265, and the application submits a
+"Depth and motion vectors" (receive only or headset frame synthesis), the stream uses H.264 or H.265, and the application submits a
 single projection layer. See [the transport specification](./frame_synthesis_transport.md).
 
 Either a boolean, or an object with the following keys:

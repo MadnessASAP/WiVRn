@@ -281,8 +281,14 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 		info.settings.bitrate_bps = config.bitrate_bps;
 		info.settings.mirror_gamepad = config.forward_gamepad;
 		info.settings.enabled_body_parts = config.body_part_mask;
-		info.settings.frame_synthesis = config.frame_synthesis;
+		info.settings.frame_synthesis = config.get_frame_synthesis_mode() != frame_synthesis_mode::off;
 		info.frame_synthesis_format = wivrn::frame_synthesis::format_hash();
+		if (self->instance.has_extension(XR_EXT_FRAME_SYNTHESIS_EXTENSION_NAME))
+		{
+			auto fs_view = self->system.frame_synthesis_config_views(self->viewconfig)[0];
+			info.frame_synthesis_motion_vector_width = fs_view.recommendedMotionVectorImageRectWidth;
+			info.frame_synthesis_motion_vector_height = fs_view.recommendedMotionVectorImageRectHeight;
+		}
 
 		info.hand_tracking = config.check_feature(feature::hand_tracking);
 		info.eye_gaze = config.check_feature(feature::eye_gaze);
@@ -1105,6 +1111,55 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		                      {bias, bias, bias, 0.},
 		                      image_index);
 
+		// Forward the frame synthesis data to the runtime
+		std::array<std::shared_ptr<stream_frame_synthesis::frame>, view_count> frame_synthesis_frames;
+		bool forward_frame_synthesis = false;
+		if (application::get_config().get_frame_synthesis_mode() == frame_synthesis_mode::runtime and
+		    instance.has_extension(XR_EXT_FRAME_SYNTHESIS_EXTENSION_NAME) and
+		    not runtime_frame_synthesis_failed)
+		{
+			bool repeated = false;
+			for (size_t i = 0; i < view_count; ++i)
+			{
+				if (const auto & handle = current_blit_handles[i])
+				{
+					frame_synthesis_frames[i] = handle->frame_synthesis;
+					repeated |= handle->feedback.times_displayed > 1;
+				}
+			}
+
+			const auto result = stream_frame_synthesis::check(frame_synthesis_frames, repeated);
+			if (result == stream_frame_synthesis::result::forwarded and not runtime_frame_synthesis)
+			{
+				try
+				{
+					runtime_frame_synthesis = stream_frame_synthesis::create(instance, session, system, device, viewconfig);
+				}
+				catch (std::exception & e)
+				{
+					spdlog::warn("Runtime frame synthesis: initialization failed: {}", e.what());
+				}
+				runtime_frame_synthesis_failed = not runtime_frame_synthesis;
+				const auto & first = *frame_synthesis_frames[0];
+				spdlog::info("Runtime frame synthesis: received images {}x{}, application images {}x{}",
+				             first.extent.width,
+				             first.extent.height,
+				             first.header.motion.source_width,
+				             first.header.motion.source_height);
+			}
+
+			if (runtime_frame_synthesis)
+			{
+				if (result == stream_frame_synthesis::result::forwarded)
+				{
+					runtime_frame_synthesis->record(command_buffer, frame_synthesis_frames);
+					forward_frame_synthesis = true;
+				}
+				++runtime_frame_synthesis_results[size_t(result)];
+				log_runtime_frame_synthesis(frame_state.predictedDisplayTime);
+			}
+		}
+
 #if WIVRN_USE_V4L2
 		// the blit handles keep CAPTURE buffers alive until this cmd buffer's fence has completed
 		inplace_vector<vk::ImageMemoryBarrier, decoder_count> foreign_release_barriers;
@@ -1146,9 +1201,9 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		vk::SubmitInfo submit_info;
 		submit_info.setCommandBuffers(*command_buffer);
 
-		inplace_vector<vk::Semaphore, decoder_count> semaphores;
-		inplace_vector<uint64_t, decoder_count> semaphore_vals;
-		inplace_vector<vk::PipelineStageFlags, decoder_count> wait_stages;
+		inplace_vector<vk::Semaphore, decoder_count + view_count> semaphores;
+		inplace_vector<uint64_t, decoder_count + view_count> semaphore_vals;
+		inplace_vector<vk::PipelineStageFlags, decoder_count + view_count> wait_stages;
 		for (auto b: current_blit_handles)
 		{
 			if (b and b->semaphore)
@@ -1156,6 +1211,15 @@ void scenes::stream::render(const XrFrameState & frame_state)
 				assert(b->semaphore_val);
 				semaphores.push_back(b->semaphore);
 				semaphore_vals.push_back(*b->semaphore_val);
+				wait_stages.push_back(vk::PipelineStageFlagBits::eFragmentShader);
+			}
+		}
+		if (forward_frame_synthesis)
+		{
+			for (const auto & f: frame_synthesis_frames)
+			{
+				semaphores.push_back(f->semaphore);
+				semaphore_vals.push_back(f->semaphore_value);
 				wait_stages.push_back(vk::PipelineStageFlagBits::eFragmentShader);
 			}
 		}
@@ -1173,6 +1237,8 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		renderdoc_end(*vk_instance);
 #endif
 		swapchain.release();
+		if (forward_frame_synthesis)
+			runtime_frame_synthesis->release();
 
 		if (use_alpha)
 			session.enable_passthrough(system);
@@ -1200,6 +1266,8 @@ void scenes::stream::render(const XrFrameState & frame_state)
 			                        .imageArrayIndex = view,
 			                },
 			        };
+			if (forward_frame_synthesis)
+				layer_view[view].next = runtime_frame_synthesis->info(view, *frame_synthesis_frames[view], application::get_hmd_traits().frame_synthesis_flip_y);
 		}
 		add_projection_layer(
 		        use_alpha ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT : 0,
@@ -1314,6 +1382,22 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 
 	if (defoveator)
 		defoveator->reset_pipelines();
+}
+
+void scenes::stream::log_runtime_frame_synthesis(XrTime now)
+{
+	if (now - runtime_frame_synthesis_log_time < 10'000'000'000)
+		return;
+	runtime_frame_synthesis_log_time = now;
+
+	const auto & r = runtime_frame_synthesis_results;
+	using result = stream_frame_synthesis::result;
+	spdlog::info("Runtime frame synthesis: forwarded {}, no data {}, not ready {}, mismatch {}, repeated {}",
+	             r[size_t(result::forwarded)],
+	             r[size_t(result::no_data)],
+	             r[size_t(result::not_ready)],
+	             r[size_t(result::mismatch)],
+	             r[size_t(result::repeated)]);
 }
 
 void scenes::stream::setup_reprojection_swapchain(uint32_t swapchain_width, uint32_t swapchain_height)

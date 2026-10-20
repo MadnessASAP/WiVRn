@@ -107,6 +107,8 @@ public:
 	std::vector<XrViewConfigurationType> view_configurations() const;
 	XrViewConfigurationProperties view_configuration_properties(XrViewConfigurationType) const;
 	std::vector<XrViewConfigurationView> view_configuration_views(XrViewConfigurationType) const;
+	// Requires XR_EXT_frame_synthesis
+	std::vector<XrFrameSynthesisConfigViewEXT> frame_synthesis_config_views(XrViewConfigurationType) const;
 	std::vector<XrEnvironmentBlendMode> environment_blend_modes(XrViewConfigurationType) const;
 };
 } // namespace xr

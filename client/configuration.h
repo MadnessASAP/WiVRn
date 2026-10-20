@@ -56,6 +56,17 @@ enum class posture
 	seated,
 };
 
+// Use of the XR_EXT_frame_synthesis data (depth and motion vectors) of
+// applications
+enum class frame_synthesis_mode
+{
+	off,
+	// Receive the data without using it (statistics, transport tests)
+	receive,
+	// Forward it to the headset runtime's XR_EXT_frame_synthesis
+	runtime,
+};
+
 class configuration
 {
 public:
@@ -122,8 +133,8 @@ public:
 	bool high_power_mode = true;
 
 	// Request the XR_EXT_frame_synthesis data of applications (depth and
-	// motion vectors) along with the video stream
-	bool frame_synthesis = false;
+	// motion vectors) along with the video stream, and what to do with it
+	frame_synthesis_mode frame_synthesis = frame_synthesis_mode::off;
 	uint32_t fps_divider = 1;
 
 	bool usb_network = false;
@@ -136,6 +147,8 @@ public:
 	std::string locale;
 
 	bool check_feature(feature f) const;
+	// frame_synthesis, or its hmd_traits override for tests
+	frame_synthesis_mode get_frame_synthesis_mode() const;
 	void set_feature(feature f, bool state);
 
 	static constexpr float default_height_offset_standing = 0;

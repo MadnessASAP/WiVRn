@@ -278,8 +278,12 @@ The frame period is 8.3 ms at 120 Hz and 11.1 ms at 90 Hz: the CPU path only fit
 
 * The headset sends `headset_info_packet::frame_synthesis_format = format_hash()`, and
   `settings_changed::frame_synthesis` (also in the initial `headset_info_packet::settings`) from
-  the "Receive depth and motion vectors" setting, default off, which can be toggled while
-  streaming.
+  the "Depth and motion vectors" setting (off, receive only, headset frame synthesis), default
+  off, which can be changed while streaming: the data is requested unless it is off.
+* When the headset runtime supports `XR_EXT_frame_synthesis`, the headset also sends its
+  recommended motion vector image size (`headset_info_packet::frame_synthesis_motion_vector_width`,
+  `_height`, 420×440 on Quest 3), which the server advertises to applications in
+  `XrFrameSynthesisConfigViewEXT`; otherwise applications are told the colour size.
 * The server transmits auxiliary data for a frame only when: the server configuration
   `frame-synthesis` is enabled, the headset format hash matches, the headset requests it, both
   eye streams are H.264 or H.265, the frame has a single projection layer with
@@ -342,6 +346,18 @@ The frame period is 8.3 ms at 120 Hz and 11.1 ms at 90 Hz: the CPU path only fit
   eye and `frame_idx`. It may still be pending: consumers must check `status()`.
 * Statistics per eye (received, decoded, errors, dropped, average size, decode time) are shown
   in the headset statistics tab.
+* Headset frame synthesis mode (`stream_frame_synthesis`, client): when both eyes of a colour
+  frame submitted for the first time have `ready` data of that frame, the images are copied
+  (resampled, nearest) into motion vector (`R16G16B16A16_SFLOAT`) and depth (first supported of
+  D32, D24S8, X8D24, D16) swapchains of the runtime's recommended size, 2 array layers, by a
+  full screen pass in the stream command buffer, which waits for the decoder semaphores. An
+  `XrFrameSynthesisInfoEXT` is chained to each view of the stream projection layer: the header
+  values, `appSpaceDeltaPose` converted to the layer space (`L·D·L⁻¹` with `layer_space_pose`),
+  without `REQUEST_RELAXED_FRAME_INTERVAL` (the stream drives the frame rate). Other frames are
+  submitted without it. Counters (forwarded, no data, not ready, mismatch, repeated) are logged
+  every 10 s and shown in the statistics tab. For tests, `adb shell setprop
+  debug.wivrn.frame_synthesis_override off|receive|runtime` overrides the setting and
+  `debug.wivrn.frame_synthesis_flip_y true` negates the Y component of the motion vectors.
 * Debugging real data: run the server with `WIVRN_DUMP_VIDEO=/tmp/stream`, then
   `wivrn-frame-synthesis-dump h264 /tmp/stream-0.h264 /tmp/fs` (built with `WIVRN_BUILD_TEST`)
   prints the metadata of every auxiliary frame and writes the images as PFM files, using the
@@ -365,8 +381,9 @@ The frame period is 8.3 ms at 120 Hz and 11.1 ms at 90 Hz: the CPU path only fit
 * Implemented by the Vulkan client compositor, IPC client and server, multi compositor and
   `comp_base`. Other client compositors (OpenGL, D3D) do not implement it: their data is
   dropped.
-* `XrFrameSynthesisConfigViewEXT` recommends the colour recommended size: the transmitted size
-  is decided by the server.
+* `XrFrameSynthesisConfigViewEXT` recommends `xrt_view_config_properties::recommended_motion_vector`
+  when set (the WiVRn server sets the headset runtime's size), the colour recommended size
+  otherwise: the transmitted size is decided by the server.
 
 ### WiVRn server
 

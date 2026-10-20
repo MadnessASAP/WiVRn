@@ -612,7 +612,8 @@ xrt_result_t compositor::get_view_config(
         xrt_view_config * out_view_config)
 {
 	const auto & session = reinterpret_cast<compositor *>(self)->session;
-	const auto extent = render_extent(session.get_info());
+	const auto & info = session.get_info();
+	const auto extent = render_extent(info);
 	switch (view_type)
 	{
 		case XRT_VIEW_TYPE_MONO:
@@ -634,6 +635,12 @@ xrt_result_t compositor::get_view_config(
 				                .width_pixels = extent.width * 2u,
 				                .height_pixels = extent.height * 2u,
 				                .sample_count = 1,
+				        },
+				        // XR_EXT_frame_synthesis: the headset runtime's size, the
+				        // colour size if unknown
+				        .recommended_motion_vector = {
+				                .width_pixels = info.frame_synthesis_motion_vector_width,
+				                .height_pixels = info.frame_synthesis_motion_vector_height,
 				        },
 				};
 			}

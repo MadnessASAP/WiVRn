@@ -404,14 +404,40 @@ void settings_streaming(const settings_context & ctx)
 	        .default_int = int(default_config.bitrate_bps / mb),
 	});
 
+	std::vector<frame_synthesis_mode> frame_synthesis_modes{frame_synthesis_mode::off, frame_synthesis_mode::receive};
+	if (ctx.instance.has_extension(XR_EXT_FRAME_SYNTHESIS_EXTENSION_NAME))
+		frame_synthesis_modes.push_back(frame_synthesis_mode::runtime);
+
 	list.push_back({
 	        .id = "##frame_synthesis",
-	        .label = _C("setting name", "Receive depth and motion vectors"),
-	        .description = _("Experimental: also receive the depth and motion vector images of applications that provide them (XR_EXT_frame_synthesis). Requires H.264 or H.265 and uses additional bandwidth."),
-	        .ui = ui_kind::toggle,
-	        .get_bool = [&config] { return config.frame_synthesis; },
-	        .set_bool = [&ctx, &config](bool v) { config.frame_synthesis = v; config.save(); if (ctx.on_streaming_changed) ctx.on_streaming_changed(); },
-	        .default_bool = default_config.frame_synthesis,
+	        .label = _C("setting name", "Depth and motion vectors"),
+	        .description = _("Experimental: also receive the depth and motion vector images of applications that provide them (XR_EXT_frame_synthesis). Requires H.264 or H.265 and uses additional bandwidth. The headset can use them to synthesize frames when a frame is late."),
+	        .ui = ui_kind::combo,
+	        .get_int = [&config, frame_synthesis_modes] { return index(frame_synthesis_modes, config.frame_synthesis).value_or(1); },
+	        .set_int = [&ctx, &config, frame_synthesis_modes](int v) {
+		        config.frame_synthesis = frame_synthesis_modes[v];
+		        config.save();
+		        if (ctx.on_streaming_changed) ctx.on_streaming_changed(); },
+	        .options = [frame_synthesis_modes] {
+		        std::vector<std::string> opts;
+		        for (auto mode: frame_synthesis_modes)
+		        {
+			        switch (mode)
+			        {
+				        case frame_synthesis_mode::off:
+					        opts.push_back(_C("frame synthesis", "Off"));
+					        break;
+				        case frame_synthesis_mode::receive:
+					        opts.push_back(_C("frame synthesis", "Receive only"));
+					        break;
+				        case frame_synthesis_mode::runtime:
+					        opts.push_back(_C("frame synthesis", "Headset frame synthesis"));
+					        break;
+			        }
+		        }
+		        return opts; },
+	        .title = _C("setting name", "Depth and motion vectors"),
+	        .default_int = index(frame_synthesis_modes, default_config.frame_synthesis).value_or(0),
 	});
 
 	// in-stream: steer where foveation focuses quality

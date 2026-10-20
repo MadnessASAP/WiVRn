@@ -152,6 +152,17 @@ config_field scalar(const char * key, T configuration::* member)
 }
 } // namespace
 
+frame_synthesis_mode configuration::get_frame_synthesis_mode() const
+{
+	const auto & override_mode = application::get_hmd_traits().frame_synthesis_override;
+	if (not override_mode.empty())
+	{
+		if (auto mode = magic_enum::enum_cast<frame_synthesis_mode>(override_mode))
+			return *mode;
+	}
+	return frame_synthesis;
+}
+
 bool configuration::check_feature(feature f) const
 {
 	{
@@ -262,6 +273,11 @@ configuration::configuration(xr::system & system, xr::session & session, const s
 
 		for (const auto & f: config_fields())
 			f.load(root, *this);
+
+		// before the frame synthesis mode, the setting was a bool that only
+		// requested the data
+		if (auto val = root["frame_synthesis"]; val.is_bool())
+			frame_synthesis = val.get_bool() ? frame_synthesis_mode::receive : frame_synthesis_mode::off;
 
 		// refresh rate must be supported by this headset, otherwise fall back to the default
 		const auto & rates = session.get_refresh_rates();

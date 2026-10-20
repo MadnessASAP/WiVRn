@@ -61,6 +61,12 @@ public:
 	// Quest switch to its half rate mode (higher latency).
 	bool discard_repeated_frames = false;
 	bool usb_net = false;
+	// Testing: frame synthesis mode used instead of the configured one
+	// (off, receive, runtime), empty: use the configuration
+	std::string frame_synthesis_override;
+	// Negate the Y component of the motion vectors forwarded to the runtime's
+	// XR_EXT_frame_synthesis (the Y direction differs between implementations)
+	bool frame_synthesis_flip_y = false;
 	std::unordered_map<std::string, std::string> override_shader;
 	std::unordered_set<std::string> blacklisted_extensions;
 #ifndef NDEBUG

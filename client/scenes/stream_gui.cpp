@@ -386,6 +386,21 @@ void scenes::stream::gui_frame_synthesis_stats()
 		                stats->decode_ms.load())
 		                .c_str());
 	}
+
+	if (runtime_frame_synthesis)
+	{
+		const auto & r = runtime_frame_synthesis_results;
+		using result = stream_frame_synthesis::result;
+		ImGui::TextUnformatted(
+		        fmt::format(
+		                "Headset frame synthesis: {} forwarded, {} without data, {} not ready, {} mismatched, {} repeated",
+		                r[size_t(result::forwarded)],
+		                r[size_t(result::no_data)],
+		                r[size_t(result::not_ready)],
+		                r[size_t(result::mismatch)],
+		                r[size_t(result::repeated)])
+		                .c_str());
+	}
 }
 
 void scenes::stream::gui_compact_view()
@@ -421,7 +436,7 @@ static void send_settings_changed_packet(xr::session & session, wivrn_session * 
 	                .bitrate_bps = config.bitrate_bps,
 	                .mirror_gamepad = config.forward_gamepad,
 	                .enabled_body_parts = config.body_part_mask,
-	                .frame_synthesis = config.frame_synthesis,
+	                .frame_synthesis = config.get_frame_synthesis_mode() != frame_synthesis_mode::off,
 	        });
 }
 
