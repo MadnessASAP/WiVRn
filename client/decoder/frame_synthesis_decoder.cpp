@@ -138,6 +138,14 @@ void frame_synthesis_decoder::push(uint64_t frame_index, std::vector<uint8_t> &&
 		std::unique_lock lock(recent_mutex);
 		recent[frame_index % recent.size()] = f;
 	}
+	if (pending_jobs >= max_pending_jobs)
+	{
+		++stats.dropped;
+		f->status_.store(frame::state::failed, std::memory_order_release);
+		atrace::async_end(trace_latency.c_str(), int32_t(frame_index));
+		return;
+	}
+	++pending_jobs;
 	jobs.push(job{
 	        .target = std::move(f),
 	        .blob = std::move(blob),
@@ -165,6 +173,17 @@ void frame_synthesis_decoder::run()
 		catch (utils::sync_queue_closed &)
 		{
 			return;
+		}
+		--pending_jobs;
+
+		// Only this job references the frame: it left the recent list and no
+		// colour image uses it, nothing can use the decoded data
+		if (j.target.use_count() == 1)
+		{
+			++stats.dropped;
+			j.target->status_.store(frame::state::failed, std::memory_order_release);
+			atrace::async_end(trace_latency.c_str(), int32_t(j.target->frame_index));
+			continue;
 		}
 
 		try

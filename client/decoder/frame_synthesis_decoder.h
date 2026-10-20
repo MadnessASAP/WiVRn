@@ -96,7 +96,7 @@ public:
 		std::atomic<uint64_t> received = 0;
 		std::atomic<uint64_t> decoded = 0;
 		std::atomic<uint64_t> errors = 0;
-		std::atomic<uint64_t> dropped = 0;
+		std::atomic<uint64_t> dropped = 0; // not decoded: no free slot, obsolete or queue full
 		std::atomic<uint64_t> bytes = 0;
 		// exponential moving average of the CPU decode time
 		std::atomic<float> decode_ms = 0;
@@ -161,6 +161,10 @@ private:
 	std::mutex recent_mutex;
 	std::array<std::shared_ptr<frame>, 4> recent;
 
+	// Jobs not yet taken by the worker, received data is dropped above
+	// max_pending_jobs (the worker cannot keep up)
+	static constexpr uint32_t max_pending_jobs = 8;
+	std::atomic<uint32_t> pending_jobs = 0;
 	utils::sync_queue<job> jobs;
 	std::thread worker;
 
