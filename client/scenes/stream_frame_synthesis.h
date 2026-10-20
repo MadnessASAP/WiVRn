@@ -109,8 +109,9 @@ public:
 
 	// Fill the frame synthesis information of a view from its header, valid
 	// until the next call. The stream layer must be submitted in the space of
-	// view_info_t::pose. flip_y negates the Y component of the motion vectors.
-	XrFrameSynthesisInfoEXT * info(uint32_t view, const frame &, bool flip_y);
+	// view_info_t::pose. The motion vectors are multiplied by motion_scale, flip_y
+	// negates their Y component.
+	XrFrameSynthesisInfoEXT * info(uint32_t view, const frame &, float motion_scale, bool flip_y);
 
 	vk::Extent2D size() const
 	{

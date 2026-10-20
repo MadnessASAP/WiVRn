@@ -102,6 +102,23 @@ std::optional<uint32_t> env(std::string_view name)
 }
 
 template <>
+std::optional<float> env(std::string_view name)
+{
+	const auto value = env<std::string>(name);
+	if (not value or value->empty())
+		return std::nullopt;
+	try
+	{
+		return std::stof(*value);
+	}
+	catch (std::exception & e)
+	{
+		spdlog::warn("failed to parse {} (value: {}: {}", name, *value, e.what());
+		return std::nullopt;
+	}
+}
+
+template <>
 std::optional<bool> env(std::string_view name)
 {
 	const auto value = env<std::string>(name);

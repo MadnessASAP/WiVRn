@@ -68,6 +68,9 @@ public:
 	// Negate the Y component of the motion vectors forwarded to the runtime's
 	// XR_EXT_frame_synthesis (the Y direction differs between implementations)
 	bool frame_synthesis_flip_y = false;
+	// Testing: factor applied to the motion vectors forwarded to the runtime's
+	// XR_EXT_frame_synthesis
+	float frame_synthesis_motion_scale = 1;
 	std::unordered_map<std::string, std::string> override_shader;
 	std::unordered_set<std::string> blacklisted_extensions;
 #ifndef NDEBUG

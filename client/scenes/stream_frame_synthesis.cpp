@@ -463,7 +463,7 @@ void stream_frame_synthesis::release()
 	acquired = false;
 }
 
-XrFrameSynthesisInfoEXT * stream_frame_synthesis::info(uint32_t view, const frame & f, bool flip_y)
+XrFrameSynthesisInfoEXT * stream_frame_synthesis::info(uint32_t view, const frame & f, float motion_scale, bool flip_y)
 {
 	const auto & h = f.header;
 
@@ -473,6 +473,7 @@ XrFrameSynthesisInfoEXT * stream_frame_synthesis::info(uint32_t view, const fram
 	const rigid_transform delta = layer_space * rigid_transform(h.app_space_delta_pose) * layer_space.inverse();
 
 	const float y_sign = flip_y ? -1 : 1;
+	const float s = motion_scale;
 	const XrRect2Di rect{
 	        .offset = {0, 0},
 	        .extent = {int32_t(extent.width), int32_t(extent.height)},
@@ -489,15 +490,15 @@ XrFrameSynthesisInfoEXT * stream_frame_synthesis::info(uint32_t view, const fram
 	                .imageArrayIndex = view,
 	        },
 	        .motionVectorScale = {
-	                h.motion_vector_scale.x,
-	                y_sign * h.motion_vector_scale.y,
-	                h.motion_vector_scale.z,
+	                s * h.motion_vector_scale.x,
+	                s * y_sign * h.motion_vector_scale.y,
+	                s * h.motion_vector_scale.z,
 	                0,
 	        },
 	        .motionVectorOffset = {
-	                h.motion_vector_offset.x,
-	                y_sign * h.motion_vector_offset.y,
-	                h.motion_vector_offset.z,
+	                s * h.motion_vector_offset.x,
+	                s * y_sign * h.motion_vector_offset.y,
+	                s * h.motion_vector_offset.z,
 	                0,
 	        },
 	        .appSpaceDeltaPose = delta,

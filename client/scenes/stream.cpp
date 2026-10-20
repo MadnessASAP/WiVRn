@@ -1278,7 +1278,11 @@ void scenes::stream::render(const XrFrameState & frame_state)
 			                },
 			        };
 			if (forward_frame_synthesis)
-				layer_view[view].next = runtime_frame_synthesis->info(view, *frame_synthesis_frames[view], application::get_hmd_traits().frame_synthesis_flip_y);
+				layer_view[view].next = runtime_frame_synthesis->info(
+				        view,
+				        *frame_synthesis_frames[view],
+				        application::get_hmd_traits().frame_synthesis_motion_scale,
+				        application::get_hmd_traits().frame_synthesis_flip_y);
 		}
 		add_projection_layer(
 		        use_alpha ? XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT : 0,

@@ -368,7 +368,8 @@ The frame period is 8.3 ms at 120 Hz and 11.1 ms at 90 Hz: the CPU path only fit
   data, not ready, mismatch, repeated, not consecutive) are logged every 10 s and shown in the
   statistics tab. For tests, `adb shell setprop
   debug.wivrn.frame_synthesis_override off|receive|runtime` overrides the setting and
-  `debug.wivrn.frame_synthesis_flip_y true` negates the Y component of the motion vectors.
+  `debug.wivrn.frame_synthesis_flip_y true` negates the Y component of the motion vectors,
+  `debug.wivrn.frame_synthesis_motion_scale <factor>` multiplies them.
 * Debugging real data: run the server with `WIVRN_DUMP_VIDEO=/tmp/stream`, then
   `wivrn-frame-synthesis-dump h264 /tmp/stream-0.h264 /tmp/fs` (built with `WIVRN_BUILD_TEST`)
   prints the metadata of every auxiliary frame and writes the images as PFM files, using the
