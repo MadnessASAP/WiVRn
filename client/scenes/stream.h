@@ -96,6 +96,10 @@ private:
 
 	std::optional<stream_defoveator> defoveator;
 
+	// Frame index of the last frame selected by common_frame() (render thread,
+	// reset by setup() with decoder_mutex held exclusively)
+	uint64_t last_common_frame = 0;
+
 	vk::raii::Fence fence = nullptr;
 	vk::raii::CommandBuffer command_buffer = nullptr;
 

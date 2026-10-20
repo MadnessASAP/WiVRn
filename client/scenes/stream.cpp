@@ -692,6 +692,10 @@ std::array<std::shared_ptr<shard_accumulator::blit_handle>, 3> scenes::stream::c
 			// clang-format on
 		}
 	}
+	// Never go back to a frame older than the last one shown: the server
+	// does not send every frame index, a buffer slot may keep an old frame
+	erase_if(common_frames, [this](auto frame) { return frame->feedback.frame_index < last_common_frame; });
+
 	std::array<std::shared_ptr<shard_accumulator::blit_handle>, decoder_count> result;
 	if (not common_frames.empty())
 	{
@@ -705,6 +709,7 @@ std::array<std::shared_ptr<shard_accumulator::blit_handle>, 3> scenes::stream::c
 
 		assert(*min);
 		auto frame_index = (*min)->feedback.frame_index;
+		last_common_frame = frame_index;
 		for (auto [i, decoder]: utils::enumerate(decoders))
 		{
 			if (alpha or i < view_count)
@@ -1020,8 +1025,10 @@ void scenes::stream::render(const XrFrameState & frame_state)
 		}
 	}
 
-	// Allow the headset to time warp if we are redisplaying a frame
+	// When no new frame arrived, submit the last one again, or let the
+	// headset time warp it
 	if ((not application::get_hmd_traits().discard_frame) or
+	    (not application::get_hmd_traits().discard_repeated_frames) or
 	    std::ranges::any_of(current_blit_handles, [](const auto & h) { return h and h->feedback.times_displayed < 2; }) or
 	    is_gui_interactable())
 	{
@@ -1290,6 +1297,7 @@ void scenes::stream::setup(const to_headset::video_stream_description & descript
 	std::unique_lock lock(decoder_mutex);
 	if (video_stream_description == description)
 		return;
+	last_common_frame = 0;
 	spdlog::info("Creating decoders, size {}x{}", description.width, description.height);
 	video_stream_description = description;
 
