@@ -1036,8 +1036,10 @@ void scenes::stream::render(const XrFrameState & frame_state)
 	}
 
 	// When no new frame arrived, submit the last one again, or let the runtime
-	// synthesize a frame when it receives the frame synthesis data
+	// synthesize a frame when the stream runs at half the refresh rate or the
+	// runtime receives the frame synthesis data
 	const bool discard_repeated = application::get_hmd_traits().discard_repeated_frames or
+	                              application::get_config().fps_divider == 2 or
 	                              (runtime_frame_synthesis and application::get_config().get_frame_synthesis_mode() == frame_synthesis_mode::runtime);
 	if ((not application::get_hmd_traits().discard_frame) or
 	    (not discard_repeated) or
