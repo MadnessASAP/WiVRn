@@ -36,6 +36,7 @@
 #include <atomic>
 #include <memory>
 #include <thread>
+#include <vector>
 
 namespace wivrn
 {
@@ -112,6 +113,20 @@ private:
 		comp_frame waited{.id = -1};
 		comp_frame rendering{.id = -1};
 	} frame;
+
+	// Identity of a layer's application frame: frames whose layers all have
+	// the same identities as the last frame sent repeat the same application
+	// frames and are not sent again.
+	struct layer_id
+	{
+		xrt_layer_type type;
+		int64_t timestamp; // application display time
+		std::array<xrt_swapchain *, XRT_MAX_VIEWS * 4> swapchains;
+		bool operator==(const layer_id &) const = default;
+	};
+	std::vector<layer_id> last_layers;
+
+	std::vector<layer_id> get_layer_ids() const;
 
 	xrt_result_t begin_session(const xrt_begin_session_info * info)
 	{

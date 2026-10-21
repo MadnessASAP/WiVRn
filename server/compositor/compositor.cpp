@@ -282,9 +282,26 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 
 	U_LOG_IFL_D(log_level, "frame %ld commit %d layers", frame.rendering.id, layer_accum.layer_count);
 
-	if (encode_request >= 0 // encoders have not picked up the previous frame
-	    or not session.connected() or not session.get_offset())
+	if (not session.connected() or not session.get_offset())
 	{
+		// Send the current application frames to the next client
+		last_layers.clear();
+		comp_frame_clear_locked(&frame.rendering);
+		return XRT_SUCCESS;
+	}
+
+	if (encode_request >= 0) // encoders have not picked up the previous frame
+	{
+		comp_frame_clear_locked(&frame.rendering);
+		return XRT_SUCCESS;
+	}
+
+	// Do not send the same application frames again (the application did not
+	// submit a new frame in time): the headset keeps showing the last one
+	auto layers = get_layer_ids();
+	if (not layers.empty() and layers == last_layers)
+	{
+		trace::instant_feedback("repeated application frame", os_monotonic_get_ns(), frame.rendering.id);
 		comp_frame_clear_locked(&frame.rendering);
 		return XRT_SUCCESS;
 	}
@@ -295,6 +312,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 		comp_frame_clear_locked(&frame.rendering);
 		return XRT_SUCCESS;
 	}
+	last_layers = std::move(layers);
 
 #ifdef XRT_FEATURE_RENDERDOC
 	if (auto r = renderdoc())
@@ -602,6 +620,18 @@ xrt_result_t compositor::get_view_config(
 			return XRT_ERROR_UNSUPPORTED_VIEW_TYPE;
 	}
 	return XRT_ERROR_UNSUPPORTED_VIEW_TYPE;
+}
+
+std::vector<compositor::layer_id> compositor::get_layer_ids() const
+{
+	std::vector<layer_id> layers;
+	layers.reserve(layer_accum.layer_count);
+	for (const auto & layer: std::span(layer_accum.layers, layer_accum.layer_count))
+	{
+		auto & id = layers.emplace_back(layer.data.type, layer.data.timestamp);
+		std::ranges::copy(layer.sc_array, id.swapchains.begin());
+	}
+	return layers;
 }
 
 int compositor::acquire_image()

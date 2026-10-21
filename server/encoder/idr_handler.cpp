@@ -46,7 +46,8 @@ void default_idr_handler::on_feedback(const from_headset::feedback & f)
 		                   }
 	                   },
 	                   [this, &f](running & r) {
-		                   if (not f.sent_to_decoder and f.frame_index >= r.last_ack and not is_non_ref_frame(f.frame_index))
+		                   if (not f.sent_to_decoder and f.frame_index >= r.last_ack and not is_non_ref_frame(f.frame_index) and
+		                       encoded_frames[f.frame_index % encoded_frames.size()] == f.frame_index)
 		                   {
 			                   U_LOG_I("IDR frame needed on stream %d", f.stream_index);
 			                   U_LOG_D("frame_idx: %ld, last_ack = %ld",
@@ -67,11 +68,13 @@ void default_idr_handler::reset()
 	U_LOG_D("IDR handler reset");
 	state = need_idr{};
 	non_ref_frames.assign(512, uint64_t(-1));
+	encoded_frames.assign(512, uint64_t(-1));
 }
 
 bool default_idr_handler::should_skip(uint64_t frame_id, uint8_t stream_idx)
 {
 	std::unique_lock lock(mutex);
+	encoded_frames[frame_id % encoded_frames.size()] = frame_id;
 	auto res = std::visit(utils::overloaded{
 	                              [this, frame_id, stream_idx](wait_idr_feedback w) {
 		                              if (frame_id > w.idr_id + 100)

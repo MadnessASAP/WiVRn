@@ -54,6 +54,10 @@ class default_idr_handler : public idr_handler
 	};
 	std::variant<need_idr, wait_idr_feedback, running> state;
 	std::vector<uint64_t> non_ref_frames{512, uint64_t(-1)};
+	// Frames given to the encoder: the compositor does not send every frame
+	// index (repeated application frames, busy encoders), the headset reports
+	// the missing indices as lost frames
+	std::vector<uint64_t> encoded_frames = std::vector<uint64_t>(512, uint64_t(-1));
 
 public:
 	enum class frame_type
