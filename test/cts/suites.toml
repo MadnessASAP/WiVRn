@@ -1,0 +1,231 @@
+# OpenXR conformance test (CTS) suites for WiVRn, used by run_cts.py. See docs/testing.md.
+
+[cts]
+repository = "https://github.com/KhronosGroup/OpenXR-CTS.git"
+tag = "openxr-cts-1.1.63.0"
+
+# ---------------------------------------------------------------------------
+# Virtual headset profiles: the features the headset reports decide which devices and
+# trackers the server creates, so some extensions are only usable with some profiles.
+
+[profiles.quest]
+description = "Quest-like: controllers, hand tracking, eye gaze, FB face tracking 2, Meta body tracking"
+args = ["--controllers", "touch", "--hand-tracking", "true", "--eye-gaze", "true",
+        "--palm-pose", "true", "--user-presence", "true", "--face", "fb2", "--body", "meta",
+        "--refresh-rate", "90", "--refresh-rate", "72", "--refresh-rate", "120",
+        "--width", "1024", "--height", "1024", "--stream-scale", "0.5"]
+
+[profiles.android]
+description = "Android XR-like: Android face tracking, no eye gaze, FB body tracking"
+args = ["--controllers", "touch", "--hand-tracking", "true", "--eye-gaze", "false",
+        "--face", "android", "--body", "fb", "--refresh-rate", "90",
+        "--width", "1024", "--height", "1024", "--stream-scale", "0.5"]
+
+[profiles.htc]
+description = "Vive Focus-like: HTC facial tracking, HTC body tracking with generic trackers"
+args = ["--controllers", "touch", "--hand-tracking", "true", "--eye-gaze", "true",
+        "--face", "htc", "--body", "htc", "--generic-trackers", "3", "--refresh-rate", "90",
+        "--width", "1024", "--height", "1024", "--stream-scale", "0.5"]
+
+[profiles.pico]
+description = "Pico-like: ByteDance body tracking, no face tracking"
+args = ["--controllers", "touch", "--hand-tracking", "true", "--eye-gaze", "false",
+        "--face", "none", "--body", "bd", "--refresh-rate", "90",
+        "--width", "1024", "--height", "1024", "--stream-scale", "0.5"]
+
+[profiles.minimal]
+description = "No optional feature: checks that unsupported features are reported as such"
+args = ["--controllers", "none", "--hand-tracking", "false", "--eye-gaze", "false",
+        "--palm-pose", "false", "--user-presence", "false", "--face", "none", "--body", "none",
+        "--refresh-rate", "90", "--width", "1024", "--height", "1024", "--stream-scale", "0.5"]
+
+# ---------------------------------------------------------------------------
+# Tiers
+
+[tiers.ci]
+description = "GitHub-hosted runner: no GPU, Vulkan through Mesa lavapipe (pass --vk-driver), raw video"
+headset = "virtual"
+profile = "quest"
+plugin = "vulkan2"
+timeout = 1800
+min_video_frames = 100
+server_config = { encoder = "raw" }
+
+[[tiers.ci.runs]]
+name = "core"
+tests = "~[interactive]"
+
+[[tiers.ci.runs]]
+name = "vulkan"
+plugin = "vulkan"
+tests = "[XR_KHR_vulkan_enable],graphicsBindings"
+min_video_frames = 0
+
+[[tiers.ci.runs]]
+name = "headless"
+plugin = "headless"
+tests = "[XR_MND_headless]"
+
+# WiVRn's tests (test/xr), once per virtual headset profile
+[[tiers.ci.runs]]
+name = "wivrn-quest"
+runner = "wivrn"
+profile = "quest"
+
+[[tiers.ci.runs]]
+name = "wivrn-android"
+runner = "wivrn"
+profile = "android"
+
+[[tiers.ci.runs]]
+name = "wivrn-htc"
+runner = "wivrn"
+profile = "htc"
+
+[[tiers.ci.runs]]
+name = "wivrn-pico"
+runner = "wivrn"
+profile = "pico"
+
+[[tiers.ci.runs]]
+name = "wivrn-minimal"
+runner = "wivrn"
+profile = "minimal"
+
+[tiers.gpu]
+description = "Host with a GPU and a hardware video encoder, no headset"
+headset = "virtual"
+profile = "quest"
+plugin = "vulkan2"
+timeout = 3600
+min_video_frames = 100
+
+[[tiers.gpu.runs]]
+name = "vulkan2"
+tests = "~[interactive]"
+
+[[tiers.gpu.runs]]
+name = "vulkan"
+plugin = "vulkan"
+tests = "~[interactive]"
+
+[[tiers.gpu.runs]]
+name = "opengl"
+plugin = "opengl"
+tests = "~[interactive]"
+
+[tiers.headset]
+description = "A real headset over ADB running the client built from this tree"
+headset = "device"
+package = "org.meumeu.wivrn.local"
+profile = "quest"
+plugin = "vulkan2"
+timeout = 3600
+
+[[tiers.headset.runs]]
+name = "device"
+tests = "~[interactive]"
+
+# ---------------------------------------------------------------------------
+# Known failures. A failing test listed here is reported as XFAIL and does not fail
+# the run; one that passes is reported as XPASS (an error with --strict).
+#   test     top-level test case name (glob)
+#   tiers    only in these tiers (default: all)
+#   runs     only in these runs (default: all)
+#   message  regular expression the failure message must match (default: any)
+#   flaky    the test may pass or fail (no XPASS when it passes)
+#   reason   why it fails, with a reference when there is one
+
+[[expected_failures]]
+test = "Timed_Pipelined_Frame_Submission"
+tiers = ["ci"]
+flaky = true
+reason = "Timing test: on the shared runner CPU, lavapipe rendering makes the frame overhead factor exceed 0.5 now and then"
+
+[[expected_failures]]
+test = "WiVRn.XR_FB_haptic_pcm"
+message = "sample rate 0|samples consumed"
+reason = """WiVRn bug: wivrn_controller::set_output ignores xrt_output_value::type and reads a PCM \
+vibration as a simple vibration (garbage duration, frequency and amplitude reach the headset); \
+samples_consumed is never written, the application gets uninitialised server memory; \
+xrGetDeviceSampleRateFB returns 0"""
+
+[[expected_failures]]
+test = "WiVRn.XR_MSFT_unbounded_reference_space"
+reason = """WiVRn advertises the extension (Monado feature) but creates its space overseer with \
+root_is_unbounded = false (wivrn_session.cpp, t_builder_create_space_overseer_legacy), so the \
+unbounded reference space is neither enumerated nor creatable"""
+
+# ---------------------------------------------------------------------------
+# Extension coverage: every extension the runtime advertises needs an entry, run_cts.py
+# fails otherwise. `tests` lists the test cases (globs) that exercise the extension;
+# an extension without CTS tests gives the reason.
+
+[extensions]
+# Interaction profiles known to the CTS are checked by xrSuggestInteractionProfileBindings_avail*:
+# every binding path of every profile of an advertised extension must be accepted.
+# WiVRn.* tests are in test/xr (wivrn-xr-tests), they check the data sent by the virtual
+# headset end to end.
+
+"XR_ANDROID_face_tracking" = { tests = ["WiVRn.XR_ANDROID_face_tracking"] }
+"XR_BD_controller_interaction" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_EXTX_overlay" = { tests = ["WiVRn.XR_EXTX_overlay"] }
+"XR_EXT_active_action_set_priority" = { tests = ["WiVRn.XR_EXT_active_action_set_priority"] }
+"XR_EXT_debug_utils" = { tests = ["XR_EXT_debug_utils"] }
+"XR_EXT_dpad_binding" = { tests = ["XR_EXT_dpad_binding"] }
+"XR_EXT_eye_gaze_interaction" = { tests = ["XR_EXT_eye_gaze_interaction-system_support_optional", "WiVRn.XR_EXT_eye_gaze_interaction"] }
+"XR_EXT_future" = { tests = ["WiVRn.XR_EXT_future"] }
+"XR_EXT_hand_interaction" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_EXT_hand_tracking" = { tests = ["XR_EXT_hand_tracking-*", "WiVRn.XR_EXT_hand_tracking"] }
+"XR_EXT_hand_tracking_data_source" = { tests = ["WiVRn.XR_EXT_hand_tracking_data_source"] }
+"XR_EXT_hp_mixed_reality_controller" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_EXT_local_floor" = { tests = ["XR_EXT_local_floor", "XR_EXT_local_floor_1_1"] }
+"XR_EXT_palm_pose" = { tests = ["xrSuggestInteractionProfileBindings_avail*", "WiVRn.XR_EXT_palm_pose"] }
+"XR_EXT_samsung_odyssey_controller" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_EXT_user_presence" = { tests = ["XR_EXT_user_presence"] }
+"XR_FB_body_tracking" = { tests = ["WiVRn.XR_FB_body_tracking"] }
+"XR_FB_display_refresh_rate" = { tests = ["WiVRn.XR_FB_display_refresh_rate"] }
+"XR_FB_face_tracking2" = { tests = ["WiVRn.XR_FB_face_tracking2"] }
+"XR_FB_haptic_pcm" = { tests = ["WiVRn.XR_FB_haptic_pcm"] }
+"XR_FB_touch_controller_pro" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_FB_touch_controller_proximity" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_HTC_facial_tracking" = { tests = ["WiVRn.XR_HTC_facial_tracking"] }
+"XR_HTC_vive_cosmos_controller_interaction" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_HTC_vive_focus3_controller_interaction" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_KHR_binding_modification" = { tests = ["XR_EXT_dpad_binding", "xrSuggestInteractionProfileBindings_avail*"] }
+"XR_KHR_composition_layer_color_scale_bias" = { tests = ["WiVRn.XR_KHR_composition_layer_color_scale_bias"] }
+"XR_KHR_composition_layer_cylinder" = { tests = ["XR_KHR_composition_layer_cylinder"] }
+"XR_KHR_composition_layer_equirect2" = { tests = ["WiVRn.XR_KHR_composition_layer_equirect2"] }
+"XR_KHR_convert_timespec_time" = { tests = ["XR_KHR_convert_timespec_time"] }
+"XR_KHR_extended_struct_name_lengths" = { tests = ["XR_KHR_extended_struct_name_lengths"] }
+"XR_KHR_locate_spaces" = { tests = ["XR_KHR_locate_spaces", "XR_KHR_locate_spaces_1_1", "xrLocateSpaces"] }
+"XR_KHR_maintenance1" = { tests = ["xrSuggestInteractionProfileBindings_maintenance1", "xrSuggestInteractionProfileBindings_avail_maintenance1"] }
+"XR_KHR_opengl_enable" = { tests = ["XR_KHR_opengl_enable"] }
+"XR_KHR_opengl_es_enable" = { tests = ["WiVRn.XR_KHR_opengl_es_enable"] }
+"XR_KHR_swapchain_usage_input_attachment_bit" = { tests = ["WiVRn.swapchain_usage_input_attachment"] }
+"XR_KHR_visibility_mask" = { tests = ["XR_KHR_visibility_mask"] }
+"XR_KHR_vulkan_enable" = { tests = ["XR_KHR_vulkan_enable"] }
+"XR_KHR_vulkan_enable2" = { tests = ["XR_KHR_vulkan_enable2"] }
+"XR_KHR_vulkan_swapchain_format_list" = { tests = ["WiVRn.XR_KHR_vulkan_swapchain_format_list"] }
+"XR_META_body_tracking_calibration" = { tests = ["WiVRn.XR_META_body_tracking_calibration"] }
+"XR_META_body_tracking_fidelity" = { tests = ["WiVRn.XR_META_body_tracking_fidelity"] }
+"XR_META_body_tracking_full_body" = { tests = ["WiVRn.XR_META_body_tracking_full_body"] }
+"XR_META_touch_controller_plus" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_ML_ml2_controller_interaction" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_MNDX_ball_on_a_stick_controller" = { tests = ["WiVRn.monado_interaction_profiles"] }
+"XR_MNDX_blubur_s1" = { tests = ["WiVRn.monado_interaction_profiles"] }
+"XR_MNDX_egl_enable" = { tests = ["WiVRn.XR_MNDX_egl_enable"] }
+"XR_MNDX_flipvr" = { tests = ["WiVRn.monado_interaction_profiles"] }
+"XR_MNDX_force_feedback_curl" = { tests = ["WiVRn.XR_MNDX_force_feedback_curl"] }
+"XR_MNDX_hydra" = { tests = ["WiVRn.monado_interaction_profiles"] }
+"XR_MNDX_oculus_remote" = { tests = ["WiVRn.monado_interaction_profiles"] }
+"XR_MNDX_psvr2_interaction" = { tests = ["WiVRn.monado_interaction_profiles"] }
+"XR_MNDX_system_buttons" = { tests = ["WiVRn.XR_MNDX_system_buttons"] }
+"XR_MNDX_xdev_space" = { tests = ["WiVRn.XR_MNDX_xdev_space"] }
+"XR_MND_contactglove2_interaction" = { tests = ["WiVRn.monado_interaction_profiles"] }
+"XR_MND_headless" = { tests = ["XR_MND_headless"] }
+"XR_MND_query_egl_device" = { tests = ["WiVRn.XR_MND_query_egl_device"] }
+"XR_MND_swapchain_usage_input_attachment_bit" = { tests = ["WiVRn.swapchain_usage_input_attachment"] }
+"XR_MSFT_unbounded_reference_space" = { tests = ["WiVRn.XR_MSFT_unbounded_reference_space"] }
+"XR_OPPO_controller_interaction" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
+"XR_VALVE_frame_controller_interaction" = { tests = ["WiVRn.monado_interaction_profiles"] }

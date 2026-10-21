@@ -1,0 +1,93 @@
+name: OpenXR CTS
+
+# Tier "ci" of test/cts/suites.toml: the server streams to a virtual headset, Vulkan runs
+# on Mesa lavapipe. The "gpu" and "headset" tiers need hardware, see docs/testing.md.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  SERVER_DEPS: libx264-dev libavcodec-dev libavutil-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev nlohmann-json3-dev librsvg2-dev libdrm-dev libglib2.0-dev-bin libpipewire-0.3-dev libcli11-dev libnotify-dev libarchive-dev libudev-dev libboost-all-dev libsystemd-dev
+  CTS_DEPS: libgl1-mesa-dev libx11-xcb-dev libxcb-dri2-0-dev libxcb-glx0-dev libxcb-icccm4-dev libxcb-keysyms1-dev libxcb-randr0-dev libxxf86vm-dev mesa-common-dev python3-jinja2
+  RUNTIME_DEPS: mesa-vulkan-drivers dbus git-lfs
+
+jobs:
+  cts:
+    name: CTS (lavapipe, virtual headset)
+    runs-on: ubuntu-26.04
+    if: ${{ vars.APK_ONLY == '' }}
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Apt dependencies
+      uses: awalsh128/cache-apt-pkgs-action@v1.6.1
+      with:
+        packages: ccache ninja-build libvulkan-dev glslang-tools spirv-tools libwayland-dev libxrandr-dev ${{ env.SERVER_DEPS }} ${{ env.CTS_DEPS }} ${{ env.RUNTIME_DEPS }}
+
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2.23
+      with:
+        key: linux-cts
+        job-summary: ""
+        restore-keys: linux-server
+
+    - uses: actions/cache@v5
+      with:
+        key: cmake-linux-cts
+        path: |
+          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.tar.*
+          ${{github.workspace}}/cmake-fetch/*-subbuild/*-populate-prefix/src/*.zip
+          ${{github.workspace}}/cmake-fetch/*.tar.*
+          ${{github.workspace}}/cmake-fetch/*.tgz
+          ${{github.workspace}}/cmake-fetch/*-src/.git
+        restore-keys: cmake-linux-
+
+    - name: CTS version
+      id: cts
+      run: echo "tag=$(python3 -c 'import tomllib; print(tomllib.load(open("test/cts/suites.toml", "rb"))["cts"]["tag"])')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache the CTS build
+      id: cts-cache
+      uses: actions/cache@v5
+      with:
+        key: openxr-cts-${{ steps.cts.outputs.tag }}-${{ runner.os }}
+        path: ${{github.workspace}}/openxr-cts
+
+    - name: Build the CTS
+      if: steps.cts-cache.outputs.cache-hit != 'true'
+      run: python3 test/cts/run_cts.py build-cts --dest ${{github.workspace}}/openxr-cts --cmake-arg=-DCMAKE_C_COMPILER_LAUNCHER=ccache --cmake-arg=-DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+    - name: Configure the server
+      # Debug keeps Monado's and WiVRn's assertions enabled
+      run: >
+        cmake -B ${{github.workspace}}/build
+        --preset server
+        -DCMAKE_BUILD_TYPE=Debug
+        -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF
+        -DFETCHCONTENT_BASE_DIR=${{github.workspace}}/cmake-fetch
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        -DWIVRN_USE_SYSTEM_OPENXR=OFF
+        -DWIVRN_BUILD_TEST=ON
+
+    - name: Build the server
+      run: cmake --build ${{github.workspace}}/build
+
+    - name: Run the CTS
+      run: >
+        python3 test/cts/run_cts.py run ci
+        --build-dir ${{github.workspace}}/build
+        --cts ${{github.workspace}}/openxr-cts/build
+        --vk-driver /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        --out ${{github.workspace}}/cts-results
+
+    - name: Upload the results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: cts-results
+        path: ${{github.workspace}}/cts-results

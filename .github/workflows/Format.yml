@@ -13,6 +13,7 @@ jobs:
           - 'server'
           - 'dashboard'
           - 'common'
+          - 'test'
           - 'tools/wireshark'
     steps:
     - uses: actions/checkout@v6

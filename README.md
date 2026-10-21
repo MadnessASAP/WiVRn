@@ -135,6 +135,8 @@ The same overrides should work for other VR applications distributed as Flatpaks
 
 See [building](docs/building.md) for building the [dashboard](docs/building.md#dashboard), [server (PC)](docs/building.md#server-pc), and [client (headset)](docs/building.md#client-headset)
 
+See [testing](docs/testing.md) for running the OpenXR conformance tests against the server.
+
 
 # Configuration
 Most settings are controlled through the headset app, while the server has configuration for items that are specific to the server. Use the dashboard to edit the latter, or see [configuration](docs/configuration.md) for editing it manually.
