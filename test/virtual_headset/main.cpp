@@ -426,8 +426,8 @@ class virtual_headset
 		        .angular_velocity = {},
 		        .device = device,
 		        .flags = uint8_t(from_headset::orientation_valid | from_headset::position_valid |
-			                 from_headset::orientation_tracked | from_headset::position_tracked |
-			                 from_headset::linear_velocity_valid | from_headset::angular_velocity_valid),
+		                         from_headset::orientation_tracked | from_headset::position_tracked |
+		                         from_headset::linear_velocity_valid | from_headset::angular_velocity_valid),
 		};
 	}
 
@@ -528,8 +528,8 @@ class virtual_headset
 			        .angular_velocity = {},
 			        .radius = 100, // 1 cm
 			        .flags = uint8_t(from_headset::orientation_valid | from_headset::position_valid |
-				                 from_headset::orientation_tracked | from_headset::position_tracked |
-				                 from_headset::linear_velocity_valid | from_headset::angular_velocity_valid),
+			                         from_headset::orientation_tracked | from_headset::position_tracked |
+			                         from_headset::linear_velocity_valid | from_headset::angular_velocity_valid),
 			};
 		}
 		send_stream(from_headset::hand_tracking{
@@ -656,7 +656,7 @@ class virtual_headset
 			        .production_timestamp = t0,
 			        .timestamp = t,
 			        .view_flags = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT |
-				              XR_VIEW_STATE_ORIENTATION_TRACKED_BIT | XR_VIEW_STATE_POSITION_TRACKED_BIT,
+			                      XR_VIEW_STATE_ORIENTATION_TRACKED_BIT | XR_VIEW_STATE_POSITION_TRACKED_BIT,
 			        .state_flags = 0,
 			};
 			// views relative to the view space
@@ -783,10 +783,10 @@ class virtual_headset
 		                [&](to_headset::video_stream_description && desc) {
 			                count<to_headset::video_stream_description>();
 			                log(std::format("video stream {}x{} codec {} {} fps",
-					                desc.width,
-					                desc.height,
-					                int(desc.codec[0]),
-					                desc.frame_rate));
+			                                desc.width,
+			                                desc.height,
+			                                int(desc.codec[0]),
+			                                desc.frame_rate));
 			                stats.video = desc;
 		                },
 		                [&](to_headset::refresh_rate_change && change) {

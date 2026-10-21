@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import ctypes
-import datetime
 import fnmatch
 import json
 import os
@@ -802,7 +801,7 @@ def cmd_run(args, suites) -> int:
             )
         return 0
 
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = time.strftime("%Y%m%d-%H%M%S")
     out = Path(args.out or f"cts-results/{args.tier}-{stamp}").resolve()
     out.mkdir(parents=True, exist_ok=True)
     log(f"results in {out}")
