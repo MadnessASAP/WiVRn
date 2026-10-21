@@ -541,6 +541,40 @@ def scan_server_log(path: Path) -> list[str]:
 # Running a tier
 
 
+def vulkan_driver(name: str) -> Path:
+    """An ICD manifest path, or "lavapipe" for Mesa's software driver."""
+    if name == "lavapipe":
+        for directory in (
+            "/usr/share/vulkan/icd.d",
+            "/usr/local/share/vulkan/icd.d",
+            "/etc/vulkan/icd.d",
+        ):
+            found = sorted(Path(directory).glob("lvp_icd*.json"))
+            if found:
+                return found[0]
+        raise RuntimeError("Mesa lavapipe not found (lvp_icd*.json), install mesa-vulkan-drivers")
+    path = Path(name).resolve()
+    if not path.is_file():
+        raise RuntimeError(f"Vulkan driver manifest {path} not found")
+    return path
+
+
+# The server gave up on the headset: the tests would wait for an OpenXR system that never comes
+SESSION_FAILURES = [r"Error creating WiVRn session", r"xrt_instance_create_system failed"]
+
+
+def run_problem(server, headset, server_log: Path) -> str | None:
+    if server.poll() is not None:
+        return f"the server exited during the tests (status {server.returncode})"
+    if isinstance(headset, VirtualHeadset) and headset.proc.poll() is not None:
+        return "the virtual headset disconnected during the tests, see headset.log"
+    text = server_log.read_text(errors="replace")
+    for pattern in SESSION_FAILURES:
+        if m := re.search(pattern + ".*", text):
+            return f"server log: {m.group(0).strip()}"
+    return None
+
+
 def run_one(args, suites, tier_name, tier, run, out: Path, cts: Path, build: Path) -> RunResult:
     profile_name = run.get("profile", tier.get("profile", "default"))
     profile = suites["profiles"][profile_name]
@@ -559,7 +593,7 @@ def run_one(args, suites, tier_name, tier, run, out: Path, cts: Path, build: Pat
     server_log = run_dir / "server.log"
     try:
         if args.vk_driver:
-            env.env["VK_DRIVER_FILES"] = str(Path(args.vk_driver).resolve())
+            env.env["VK_DRIVER_FILES"] = str(vulkan_driver(args.vk_driver))
         env.start_dbus()
 
         config = dict(tier.get("server_config", {}))
@@ -647,14 +681,18 @@ def run_one(args, suites, tier_name, tier, run, out: Path, cts: Path, build: Pat
                 start_new_session=True,
                 env=cts_env,
             )
-            try:
-                result.cts_exit = cts_proc.wait(timeout)
-            except subprocess.TimeoutExpired:
-                kill_group(cts_proc)
-                result.errors.append(f"the CTS did not finish in {timeout} s")
+            deadline = time.monotonic() + timeout
+            while (status := cts_proc.poll()) is None:
+                problem = run_problem(server, headset, server_log)
+                if problem or time.monotonic() > deadline:
+                    kill_group(cts_proc)
+                    result.errors.append(problem or f"the tests did not finish in {timeout} s")
+                    break
+                time.sleep(1)
+            result.cts_exit = status
 
-        if server.poll() is not None:
-            result.errors.append(f"the server exited during the tests (status {server.returncode})")
+        if not result.errors and (problem := run_problem(server, headset, server_log)):
+            result.errors.append(problem)
     except (RuntimeError, OSError) as e:
         result.errors.append(str(e))
     finally:
@@ -823,7 +861,9 @@ def main() -> int:
     p.add_argument("--out", help="results directory (default cts-results/<tier>-<time>)")
     p.add_argument("--run", action="append", help="only this run (repeatable)")
     p.add_argument("--tests", help="override the test selection (Catch2 test spec)")
-    p.add_argument("--vk-driver", help="Vulkan ICD manifest, e.g. Mesa lavapipe")
+    p.add_argument(
+        "--vk-driver", help='Vulkan ICD manifest for the server and tests, or "lavapipe"'
+    )
     p.add_argument("--settle", type=float, help="seconds between connection and tests")
     p.add_argument("--port", type=int, help="server port (default: the tier's, else 19757)")
     p.add_argument("--package", help="client package on the headset (headset tier)")

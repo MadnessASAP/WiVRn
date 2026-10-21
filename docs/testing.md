@@ -54,7 +54,7 @@ Useful options of `run`:
 - `--run NAME`: only this run (repeatable), `--tests SPEC`: override the test selection (a
   Catch2 test spec for the CTS, comma separated globs for `wivrn-xr-tests`).
 - `--vk-driver ICD.json`: Vulkan driver for the server and the tests, e.g.
-  `/usr/share/vulkan/icd.d/lvp_icd.x86_64.json` to run the `ci` tier without a GPU.
+  `lavapipe` (Mesa's software driver, package mesa-vulkan-drivers) to run the `ci` tier without a GPU.
 - `--port`: server port (19757 by default, so it does not collide with an installed WiVRn).
 - `--strict`: unexpected passes fail the run.
 - `--env KEY=VALUE`: environment for the tests, e.g. `__GLX_VENDOR_LIBRARY_NAME=nvidia` (see below).
@@ -72,7 +72,7 @@ the runtime advertises an extension that has no entry in `[extensions]`.
 
 ```bash
 test/cts/run_cts.py run ci --build-dir build-server --cts openxr-cts/build \
-    --vk-driver /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+    --vk-driver lavapipe
 ```
 
 ### `headset` tier

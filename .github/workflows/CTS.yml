@@ -82,7 +82,7 @@ jobs:
         python3 test/cts/run_cts.py run ci
         --build-dir ${{github.workspace}}/build
         --cts ${{github.workspace}}/openxr-cts/build
-        --vk-driver /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+        --vk-driver lavapipe
         --out ${{github.workspace}}/cts-results
 
     - name: Upload the results
