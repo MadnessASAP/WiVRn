@@ -200,7 +200,8 @@ public:
 	{
 		return frame_rate;
 	}
-	void set_framerate(float hz);
+	// Frame rate refresh_rate / fps_divider
+	void set_framerate(float refresh_rate, uint32_t fps_divider);
 
 	void set_bitrate(uint32_t);
 	void update_tracking(const from_headset::tracking &);

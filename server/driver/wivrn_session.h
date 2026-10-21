@@ -144,6 +144,8 @@ public:
 		return headset_info;
 	};
 
+	// Refresh rate and refresh periods per frame
+	std::pair<float, uint32_t> default_refresh_rate();
 	float default_fps();
 
 	locked<from_headset::settings_changed> get_settings()

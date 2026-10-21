@@ -48,6 +48,8 @@ public:
 private:
 	mutable std::mutex mutex;
 	int64_t frame_duration_ns;
+	// Refresh period of the headset, frames can be displayed at any refresh
+	int64_t display_period_ns;
 	int64_t last_ns = 0;
 	int64_t frame_id = 0;
 
@@ -79,7 +81,7 @@ public:
 	~pacer();
 
 	uint64_t get_frame_duration() const;
-	void set_frame_duration(uint64_t frame_duration);
+	void set_frame_duration(uint64_t frame_duration, uint64_t display_period);
 
 	void predict(
 	        int64_t & out_frame_id,

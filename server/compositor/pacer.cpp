@@ -35,9 +35,15 @@ namespace wivrn
 
 static const int64_t margin_ns = 3'000'000;
 static const int64_t slop_ns = 500'000;
+// Largest change of the predicted display time for each feedback: the multi
+// compositor only delivers an application frame to a compositor frame whose
+// display time is at most 0.5 ms earlier than the application's
+static const int64_t max_phase_step_ns = 100'000;
+static const int64_t max_render_to_display_step_ns = 50'000;
 
 pacer::pacer(uint64_t frame_duration) :
         frame_duration_ns(frame_duration),
+        display_period_ns(frame_duration),
         client_margin_ms{
                 .val = debug_get_float_option_client_margin_ms(),
                 .step = 0.1,
@@ -87,10 +93,11 @@ uint64_t pacer::get_frame_duration() const
 	return frame_duration_ns;
 }
 
-void pacer::set_frame_duration(uint64_t frame_duration_ns)
+void pacer::set_frame_duration(uint64_t frame_duration_ns, uint64_t display_period_ns)
 {
 	std::lock_guard lock(mutex);
 	this->frame_duration_ns = frame_duration_ns;
+	this->display_period_ns = display_period_ns;
 }
 
 void pacer::predict(
@@ -152,16 +159,26 @@ void pacer::on_feedback(const wivrn::from_headset::feedback & feedback, const cl
 			std::swap(frame_times, frame_times_compute);
 			compute_cv.notify_all();
 		}
-		// adjust phase
-		auto d = (frame_duration_ns / 2 + offset.from_headset(feedback.blitted) - last_ns) % frame_duration_ns;
+		// adjust phase to the nearest refresh: when the frame duration is
+		// several refresh periods, the headset blits frames at any of them
+		auto d = (display_period_ns / 2 + offset.from_headset(feedback.blitted) - last_ns) % display_period_ns;
 		if (d < 0)
-			d += frame_duration_ns;
-		d -= frame_duration_ns / 2;
-		last_ns += d / 10;
+			d += display_period_ns;
+		d -= display_period_ns / 2;
+		last_ns += std::clamp<int64_t>(d / 10, -max_phase_step_ns, max_phase_step_ns);
 	}
 
 	if (feedback.displayed and feedback.displayed > feedback.blitted and feedback.displayed < feedback.blitted + 100'000'000)
-		mean_render_to_display_ns = std::lerp(mean_render_to_display_ns, feedback.displayed - feedback.blitted, 0.1);
+	{
+		const int64_t render_to_display = feedback.displayed - feedback.blitted;
+		if (mean_render_to_display_ns == 0)
+			mean_render_to_display_ns = render_to_display;
+		else
+			mean_render_to_display_ns += std::clamp<int64_t>(
+			        int64_t(std::lerp(mean_render_to_display_ns, render_to_display, 0.1)) - mean_render_to_display_ns,
+			        -max_render_to_display_step_ns,
+			        max_render_to_display_step_ns);
+	}
 }
 void pacer::mark_timing_point(
         comp_target_timing_point point,

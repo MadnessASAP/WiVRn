@@ -835,14 +835,16 @@ void compositor::set_bitrate(uint32_t bitrate)
 		encoder->set_bitrate(bitrate);
 }
 
-void compositor::set_framerate(float hz)
+void compositor::set_framerate(float refresh_rate, uint32_t fps_divider)
 {
-	if (frame_rate.exchange(hz) == hz)
-		return;
-	U_LOG_IFL_D(log_level, "Framerate change from %.0f to %.0f", frame_rate.load(), hz);
-	pacer.set_frame_duration(U_TIME_1S_IN_NS / hz);
-	for (auto & encoder: encoders)
-		encoder->set_framerate(hz);
+	const float hz = refresh_rate / fps_divider;
+	pacer.set_frame_duration(U_TIME_1S_IN_NS / hz, U_TIME_1S_IN_NS / refresh_rate);
+	if (const float previous = frame_rate.exchange(hz); previous != hz)
+	{
+		U_LOG_IFL_D(log_level, "Framerate change from %.0f to %.0f", previous, hz);
+		for (auto & encoder: encoders)
+			encoder->set_framerate(hz);
+	}
 }
 
 void compositor::update_tracking(const from_headset::tracking & tracking)
