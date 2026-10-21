@@ -102,6 +102,11 @@ int create_listen_socket()
 	auto sock_file = socket_path();
 
 	addr.sun_family = AF_UNIX;
+	if (sock_file.native().size() >= sizeof(addr.sun_path))
+	{
+		std::cerr << "Socket path " << sock_file << " is too long (maximum " << sizeof(addr.sun_path) - 1 << " bytes), use a shorter XDG_RUNTIME_DIR" << std::endl;
+		throw std::system_error(ENAMETOOLONG, std::system_category());
+	}
 	strcpy(addr.sun_path, sock_file.c_str());
 
 	int fd = socket(PF_UNIX, SOCK_STREAM, 0);
