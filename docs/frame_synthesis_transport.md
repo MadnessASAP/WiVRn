@@ -313,8 +313,16 @@ The frame period is 8.3 ms at 120 Hz and 11.1 ms at 90 Hz: the CPU path only fit
   last frame sent (the application did not submit a new frame in time), so frame indices have
   gaps. The headset resubmits its last frame, except in headset frame synthesis mode once data
   was forwarded: it then submits no frame, so the runtime synthesizes the missing ones from the
-  forwarded data (Quest: Application SpaceWarp, in its half rate mode). For tests,
-  `debug.wivrn.discard_repeated_frames true` discards in all modes.
+  forwarded data (Quest: Application SpaceWarp, in its half rate mode), and with Application
+  SpaceWarp (`fps_divider` 2). For tests, `debug.wivrn.discard_repeated_frames true` discards in
+  all modes.
+* Relaxed frame interval: while the projection layer's `layerFlags` request
+  `REQUEST_RELAXED_FRAME_INTERVAL` (10 consecutive frames to switch either way), the server
+  renders at half the refresh rate (`fps_divider` at least 2: `xrWaitFrame` paces the
+  application at 2 refresh periods, the encoders and the stream follow). The headset allows it
+  only in headset frame synthesis mode, with the setting "Half rate on application request"
+  (`settings_changed::relaxed_frame_interval`, default on); the headset then synthesizes every
+  other frame. The refresh rate reported to the application does not change.
 * Not sent by the server: data larger than `max-view-kib` for an eye (default 2 MiB), frames
   with several layers, unsupported formats.
 

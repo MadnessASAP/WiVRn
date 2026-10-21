@@ -135,6 +135,9 @@ public:
 	// Request the XR_EXT_frame_synthesis data of applications (depth and
 	// motion vectors) along with the video stream, and what to do with it
 	frame_synthesis_mode frame_synthesis = frame_synthesis_mode::off;
+	// With headset frame synthesis, render at half the refresh rate while the
+	// application requests a relaxed frame interval
+	bool frame_synthesis_relaxed_interval = true;
 	uint32_t fps_divider = 1;
 
 	bool usb_network = false;

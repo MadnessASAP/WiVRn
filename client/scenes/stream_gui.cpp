@@ -439,6 +439,7 @@ static void send_settings_changed_packet(xr::session & session, wivrn_session * 
 	                .mirror_gamepad = config.forward_gamepad,
 	                .enabled_body_parts = config.body_part_mask,
 	                .frame_synthesis = config.get_frame_synthesis_mode() != frame_synthesis_mode::off,
+	                .relaxed_frame_interval = config.frame_synthesis_relaxed_interval and config.get_frame_synthesis_mode() == frame_synthesis_mode::runtime,
 	        });
 }
 

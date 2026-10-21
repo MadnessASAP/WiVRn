@@ -282,6 +282,7 @@ std::shared_ptr<scenes::stream> scenes::stream::create(std::unique_ptr<wivrn_ses
 		info.settings.mirror_gamepad = config.forward_gamepad;
 		info.settings.enabled_body_parts = config.body_part_mask;
 		info.settings.frame_synthesis = config.get_frame_synthesis_mode() != frame_synthesis_mode::off;
+		info.settings.relaxed_frame_interval = config.frame_synthesis_relaxed_interval and config.get_frame_synthesis_mode() == frame_synthesis_mode::runtime;
 		info.frame_synthesis_format = wivrn::frame_synthesis::format_hash();
 		if (self->instance.has_extension(XR_EXT_FRAME_SYNTHESIS_EXTENSION_NAME))
 		{

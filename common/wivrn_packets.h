@@ -331,6 +331,9 @@ struct settings_changed
 	// auxiliary data of the application, only honoured when
 	// headset_info_packet::frame_synthesis_format matches
 	bool frame_synthesis = false;
+	// Whether the server may render at half the refresh rate while the
+	// application requests a relaxed frame interval (XR_EXT_frame_synthesis)
+	bool relaxed_frame_interval = false;
 };
 
 struct headset_info_packet

@@ -293,6 +293,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 	}
 
 	log_counters(os_monotonic_get_ns());
+	update_relaxed_frame_interval();
 
 	// Do not send the same application frames again (the application did not
 	// submit a new frame in time): the headset keeps showing the last one
@@ -605,7 +606,7 @@ xrt_result_t compositor::get_display_refresh_rate(float * hz)
 {
 	auto settings = session.get_settings();
 	// there should not be rounding errors, hz must be one of the available refresh rates
-	*hz = frame_rate * settings->fps_divider;
+	*hz = frame_rate * fps_divider(*settings);
 	assert(std::ranges::contains(session.get_info().available_refresh_rates, *hz));
 	return XRT_SUCCESS;
 }
@@ -981,6 +982,38 @@ void compositor::set_framerate(float refresh_rate, uint32_t fps_divider)
 		for (auto & encoder: encoders)
 			encoder->set_framerate(hz);
 	}
+}
+
+uint32_t compositor::fps_divider(const from_headset::settings_changed & settings) const
+{
+	if (relaxed_frame_interval and settings.relaxed_frame_interval)
+		return std::max<uint32_t>(settings.fps_divider, 2);
+	return settings.fps_divider;
+}
+
+void compositor::update_relaxed_frame_interval()
+{
+	const bool relaxed = std::ranges::any_of(std::span(layer_accum.layers, layer_accum.layer_count), [](const comp_layer & layer) {
+		return layer.has_frame_synthesis and (layer.fs.v[0].flags & XRT_FRAME_SYNTHESIS_REQUEST_RELAXED_FRAME_INTERVAL_BIT);
+	});
+
+	// Ignore isolated frames
+	if (relaxed == relaxed_frame_interval)
+	{
+		relaxed_frame_interval_changes = 0;
+		return;
+	}
+	if (++relaxed_frame_interval_changes < 10)
+		return;
+	relaxed_frame_interval_changes = 0;
+
+	auto settings = session.get_settings();
+	const float refresh_rate = frame_rate * fps_divider(*settings);
+	relaxed_frame_interval = relaxed;
+	U_LOG_I("Application %s a relaxed frame interval%s",
+	        relaxed ? "requests" : "no longer requests",
+	        settings->relaxed_frame_interval ? "" : ", disabled on the headset");
+	set_framerate(refresh_rate, fps_divider(*settings));
 }
 
 void compositor::update_tracking(const from_headset::tracking & tracking)

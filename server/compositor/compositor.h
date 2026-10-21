@@ -89,6 +89,12 @@ private:
 	vk::raii::CommandPool cmd_pool;
 	vk::raii::QueryPool query_pool;
 
+	// The application requests a relaxed frame interval (XR_EXT_frame_synthesis),
+	// before settings: get_encoder_settings reads it through fps_divider
+	std::atomic<bool> relaxed_frame_interval = false;
+	int relaxed_frame_interval_changes = 0; // consecutive commits requesting the other state
+	void update_relaxed_frame_interval();
+
 	std::array<encoder_settings, 3> settings;
 
 	std::array<image, 2> images;
@@ -230,6 +236,9 @@ public:
 	}
 	// Frame rate refresh_rate / fps_divider
 	void set_framerate(float refresh_rate, uint32_t fps_divider);
+	// Refresh periods per frame: the headset's setting, at least 2 while the
+	// application requests a relaxed frame interval and the headset allows it
+	uint32_t fps_divider(const from_headset::settings_changed &) const;
 
 	void set_bitrate(uint32_t);
 	void update_tracking(const from_headset::tracking &);

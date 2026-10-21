@@ -440,6 +440,21 @@ void settings_streaming(const settings_context & ctx)
 	        .default_int = index(frame_synthesis_modes, default_config.frame_synthesis).value_or(0),
 	});
 
+	if (ctx.instance.has_extension(XR_EXT_FRAME_SYNTHESIS_EXTENSION_NAME))
+	{
+		list.push_back({
+		        .id = "##frame_synthesis_relaxed_interval",
+		        .label = _C("setting name", "Half rate on application request"),
+		        .description = _("Applications using frame synthesis may ask for more time per frame. When they do, they render at half the refresh rate and the headset synthesizes the other frames."),
+		        .ui = ui_kind::toggle,
+		        .get_bool = [&config] { return config.frame_synthesis_relaxed_interval; },
+		        .set_bool = [&ctx, &config](bool v) { config.frame_synthesis_relaxed_interval = v; config.save(); if (ctx.on_streaming_changed) ctx.on_streaming_changed(); },
+		        .default_bool = default_config.frame_synthesis_relaxed_interval,
+		        .enabled = [&config] { return config.frame_synthesis == frame_synthesis_mode::runtime; },
+		        .disabled_tooltip = _("Requires headset frame synthesis."),
+		});
+	}
+
 	// in-stream: steer where foveation focuses quality
 	if (ctx.in_game)
 	{

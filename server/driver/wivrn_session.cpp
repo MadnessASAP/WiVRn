@@ -493,7 +493,7 @@ std::pair<float, uint32_t> wivrn_session::default_refresh_rate()
 {
 	auto s = settings.lock();
 	if (s->preferred_refresh_rate)
-		return {s->preferred_refresh_rate, s->fps_divider};
+		return {s->preferred_refresh_rate, compositor.fps_divider(*s)};
 	return {headset_info.available_refresh_rates.back(), 1};
 }
 
@@ -526,7 +526,7 @@ void wivrn_session::operator()(const from_headset::settings_changed & settings)
 		compositor.set_bitrate(settings.bitrate_bps);
 
 	if (settings.preferred_refresh_rate != 0)
-		compositor.set_framerate(settings.preferred_refresh_rate, settings.fps_divider);
+		compositor.set_framerate(settings.preferred_refresh_rate, compositor.fps_divider(settings));
 
 	if (not settings.mirror_gamepad and uinput_handler)
 		uinput_handler->destroy_gamepad();
@@ -885,7 +885,7 @@ void wivrn_session::operator()(from_headset::user_presence_changed && event)
 void wivrn_session::operator()(from_headset::refresh_rate_changed && event)
 {
 	auto locked = settings.lock();
-	compositor.set_framerate(event.to, locked->fps_divider);
+	compositor.set_framerate(event.to, compositor.fps_divider(*locked));
 	push_event(
 	        {
 	                .display = {
