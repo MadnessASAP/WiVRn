@@ -291,17 +291,23 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 		return XRT_SUCCESS;
 	}
 
-	if (encode_request >= 0) // encoders have not picked up the previous frame
-	{
-		comp_frame_clear_locked(&frame.rendering);
-		return XRT_SUCCESS;
-	}
+	log_counters(os_monotonic_get_ns());
 
 	// Do not send the same application frames again (the application did not
 	// submit a new frame in time): the headset keeps showing the last one
 	auto layers = get_layer_ids();
-	if (not layers.empty() and layers == last_layers)
+	const bool repeated = not layers.empty() and layers == last_layers;
+
+	if (encode_request >= 0) // encoders have not picked up the previous frame
 	{
+		++(repeated ? counters.busy_repeated : counters.busy_new);
+		comp_frame_clear_locked(&frame.rendering);
+		return XRT_SUCCESS;
+	}
+
+	if (repeated)
+	{
+		++counters.repeated;
 		trace::instant_feedback("repeated application frame", os_monotonic_get_ns(), frame.rendering.id);
 		comp_frame_clear_locked(&frame.rendering);
 		return XRT_SUCCESS;
@@ -314,6 +320,7 @@ xrt_result_t compositor::layer_commit(xrt_graphics_sync_handle_t sync_handle)
 		return XRT_SUCCESS;
 	}
 	last_layers = std::move(layers);
+	++counters.sent;
 
 #ifdef XRT_FEATURE_RENDERDOC
 	if (auto r = renderdoc())
@@ -694,6 +701,19 @@ std::vector<compositor::layer_id> compositor::get_layer_ids() const
 		std::ranges::copy(layer.sc_array, id.swapchains.begin());
 	}
 	return layers;
+}
+
+void compositor::log_counters(int64_t now)
+{
+	if (now - counters.log_time < 10'000'000'000)
+		return;
+	if (counters.log_time)
+		U_LOG_I("Frames: sent %lu, repeated application frames %lu, encoders busy %lu (new application frames %lu)",
+		        counters.sent,
+		        counters.repeated,
+		        counters.busy_new + counters.busy_repeated,
+		        counters.busy_new);
+	counters.log_time = now;
 }
 
 int compositor::acquire_image()

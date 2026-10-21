@@ -131,7 +131,17 @@ private:
 	};
 	std::vector<layer_id> last_layers;
 
+	// Frames committed by the multi compositor, logged every 10 s
+	struct frame_counters
+	{
+		uint64_t sent = 0;
+		uint64_t repeated = 0;      // same application frames as the last sent
+		uint64_t busy_new = 0;      // encoders busy, new application frames
+		uint64_t busy_repeated = 0; // encoders busy, same application frames
+		int64_t log_time = 0;
+	} counters;
 	std::vector<layer_id> get_layer_ids() const;
+	void log_counters(int64_t now);
 
 	xrt_result_t begin_session(const xrt_begin_session_info * info)
 	{
