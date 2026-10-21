@@ -11,7 +11,7 @@ on:
 env:
   SERVER_DEPS: libx264-dev libavcodec-dev libavutil-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev nlohmann-json3-dev librsvg2-dev libdrm-dev libglib2.0-dev-bin libpipewire-0.3-dev libcli11-dev libnotify-dev libarchive-dev libudev-dev libboost-all-dev libsystemd-dev
   CTS_DEPS: libgl1-mesa-dev libx11-xcb-dev libxcb-dri2-0-dev libxcb-glx0-dev libxcb-icccm4-dev libxcb-keysyms1-dev libxcb-randr0-dev libxxf86vm-dev mesa-common-dev python3-jinja2
-  RUNTIME_DEPS: mesa-vulkan-drivers dbus git-lfs
+  RUNTIME_DEPS: mesa-vulkan-drivers dbus git-lfs bsdextrautils
 
 jobs:
   cts:
