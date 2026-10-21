@@ -53,7 +53,7 @@ class default_idr_handler : public idr_handler
 		uint64_t last_ack;
 	};
 	std::variant<need_idr, wait_idr_feedback, running> state;
-	std::vector<uint64_t> non_ref_frames{512, uint64_t(-1)};
+	std::vector<uint64_t> non_ref_frames = std::vector<uint64_t>(512, uint64_t(-1));
 
 public:
 	enum class frame_type
