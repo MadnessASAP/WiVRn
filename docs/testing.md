@@ -70,6 +70,11 @@ the runtime advertises an extension that has no entry in `[extensions]`.
 
 ### `ci` tier locally
 
+lavapipe needs Mesa 26.2 or newer (`VK_KHR_external_semaphore_fd` and `VK_KHR_external_fence_fd`,
+which Monado requires to share images with applications); `test/cts/build_lavapipe.sh PREFIX`
+builds it when the distribution's Mesa is older, as the CI workflow does.
+
+
 ```bash
 test/cts/run_cts.py run ci --build-dir build-server --cts openxr-cts/build \
     --vk-driver lavapipe

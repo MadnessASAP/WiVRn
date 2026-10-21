@@ -165,7 +165,7 @@ message = "ERROR_EXTENSION_NOT_PRESENT"
 flaky = true
 reason = """Mesa < 26.2 lavapipe (Ubuntu 26.04) lacks VK_KHR_external_semaphore_fd and \
 VK_KHR_external_fence_fd, which Monado requires for XR_KHR_vulkan_enable; the workflow installs a \
-newer Mesa when its PPA is available"""
+newer lavapipe (test/cts/build_lavapipe.sh)"""
 
 [[expected_failures]]
 test = "graphicsBindings"

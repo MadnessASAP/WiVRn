@@ -12,6 +12,7 @@ env:
   SERVER_DEPS: libx264-dev libavcodec-dev libavutil-dev libbsd-dev libavahi-client-dev libavahi-glib-dev libeigen3-dev nlohmann-json3-dev librsvg2-dev libdrm-dev libglib2.0-dev-bin libpipewire-0.3-dev libcli11-dev libnotify-dev libarchive-dev libudev-dev libboost-all-dev libsystemd-dev
   CTS_DEPS: libgl1-mesa-dev libx11-xcb-dev libxcb-dri2-0-dev libxcb-glx0-dev libxcb-icccm4-dev libxcb-keysyms1-dev libxcb-randr0-dev libxxf86vm-dev mesa-common-dev python3-jinja2
   RUNTIME_DEPS: dbus git-lfs bsdextrautils
+  MESA_VERSION: 26.2.5
 
 jobs:
   cts:
@@ -29,20 +30,20 @@ jobs:
         packages: ccache ninja-build libvulkan-dev glslang-tools spirv-tools libwayland-dev libxrandr-dev ${{ env.SERVER_DEPS }} ${{ env.CTS_DEPS }} ${{ env.RUNTIME_DEPS }}
 
     # Ubuntu's lavapipe (Mesa 26.0) lacks VK_KHR_external_semaphore_fd and VK_KHR_external_fence_fd,
-    # which Monado requires for XR_KHR_vulkan_enable: prefer a newer Mesa. The PPA is sometimes
-    # unavailable; the tests still run with Ubuntu's Mesa (see the expected failures in suites.toml).
-    - name: Mesa
+    # which Monado requires to share images with applications, and crashes in the CTS swapchain
+    # tests: build a newer one (cached)
+    - name: Cache lavapipe
+      id: lavapipe-cache
+      uses: actions/cache@v5
+      with:
+        key: lavapipe-${{ env.MESA_VERSION }}-${{ runner.os }}
+        path: ${{ github.workspace }}/mesa-lavapipe
+
+    - name: Build lavapipe
+      if: steps.lavapipe-cache.outputs.cache-hit != 'true'
       run: |
-        sudo add-apt-repository -y ppa:kisak/kisak-mesa || true
-        for i in 1 2 3; do
-          sudo apt-get update -q || true
-          sudo apt-get install -y -q mesa-vulkan-drivers
-          dpkg -l mesa-vulkan-drivers | grep -q kisak && break
-          echo "kisak Mesa not available yet, retrying"; sleep 60
-        done
-        version=$(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)
-        echo "Mesa $version"
-        case "$version" in *kisak*) ;; *) echo "::warning::kisak Mesa PPA unavailable, using Ubuntu's Mesa $version" ;; esac
+        sudo apt-get install -y -q meson python3-mako python3-yaml python3-packaging bison flex llvm-dev libclang-dev libelf-dev libexpat1-dev zlib1g-dev libzstd-dev libx11-xcb-dev libxcb-dri3-dev libxcb-present-dev libxshmfence-dev wayland-protocols
+        test/cts/build_lavapipe.sh ${{ github.workspace }}/mesa-lavapipe ${{ env.MESA_VERSION }}
 
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2.23
@@ -98,7 +99,7 @@ jobs:
         python3 test/cts/run_cts.py run ci
         --build-dir ${{github.workspace}}/build
         --cts ${{github.workspace}}/openxr-cts/build
-        --vk-driver lavapipe
+        --vk-driver ${{ github.workspace }}/mesa-lavapipe/share/vulkan/icd.d/lvp_icd.x86_64.json
         --out ${{github.workspace}}/cts-results
 
     - name: Upload the results
