@@ -61,6 +61,13 @@ plugin = "vulkan"
 tests = "[XR_KHR_vulkan_enable],graphicsBindings"
 min_video_frames = 0
 
+# XR_EXT_frame_synthesis with a headset that receives the data (core runs it with one that
+# does not). The raw encoder carries no SEI, so the server negotiates but sends no data here.
+[[tiers.ci.runs]]
+name = "frame-synthesis"
+tests = "[XR_EXT_frame_synthesis]"
+headset_args = ["--frame-synthesis", "true", "--motion-vector-size", "256", "256"]
+
 [[tiers.ci.runs]]
 name = "headless"
 plugin = "headless"
@@ -120,6 +127,14 @@ tests = "~[interactive]"
 name = "composition"
 tests = "[composition]"
 cts_args = ["--autoSkipTimeout", "500"]
+
+# Hardware encoder: the server captures the motion vectors and depth and sends them in SEI;
+# the virtual headset extracts and parses them (about 50 frames carry data in this test)
+[[tiers.gpu.runs]]
+name = "frame-synthesis"
+tests = "[XR_EXT_frame_synthesis]"
+headset_args = ["--frame-synthesis", "true", "--motion-vector-size", "256", "256"]
+min_aux_frames = 10
 
 [[tiers.gpu.runs]]
 name = "wivrn-quest"
@@ -207,6 +222,7 @@ unbounded reference space is neither enumerated nor creatable"""
 "XR_EXT_dpad_binding" = { tests = ["XR_EXT_dpad_binding"] }
 "XR_EXT_eye_gaze_interaction" = { tests = ["XR_EXT_eye_gaze_interaction-system_support_optional", "WiVRn.XR_EXT_eye_gaze_interaction"] }
 "XR_EXT_future" = { tests = ["WiVRn.XR_EXT_future"] }
+"XR_EXT_frame_synthesis" = { tests = ["XR_EXT_frame_synthesis"] }
 "XR_EXT_hand_interaction" = { tests = ["xrSuggestInteractionProfileBindings_avail*"] }
 "XR_EXT_hand_tracking" = { tests = ["XR_EXT_hand_tracking-*", "WiVRn.XR_EXT_hand_tracking"] }
 "XR_EXT_hand_tracking_data_source" = { tests = ["WiVRn.XR_EXT_hand_tracking_data_source"] }

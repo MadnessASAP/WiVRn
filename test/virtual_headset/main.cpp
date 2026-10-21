@@ -25,6 +25,8 @@
 // the server in CI.
 
 #include "crypto.h"
+#include "frame_synthesis/annexb_sei.h"
+#include "frame_synthesis/aux_frame.h"
 #include "protocol_version.h"
 #include "utils/overloaded.h"
 #include "wivrn_packets.h"
@@ -93,6 +95,8 @@ struct options
 	std::string body = "none";
 	uint32_t generic_trackers = 0;
 	std::string controllers = "touch";
+	bool frame_synthesis = false;
+	std::vector<uint16_t> motion_vector_size{0, 0};
 	bool motion = false;
 	double duration = 0;
 	std::string ready_file;
@@ -113,6 +117,10 @@ struct statistics
 	uint64_t tracking_control_received = 0;
 	uint64_t haptics_received = 0;
 	uint64_t refresh_rate_changes = 0;
+	// XR_EXT_frame_synthesis auxiliary data (with --frame-synthesis)
+	uint64_t aux_frames = 0; // parsed successfully
+	uint64_t aux_errors = 0; // incomplete or invalid
+	uint64_t aux_bytes = 0;
 	std::map<std::string, uint64_t> packets;
 	std::optional<to_headset::video_stream_description> video;
 	std::string exit_reason;
@@ -131,6 +139,7 @@ struct statistics
 		        {"tracking_control_received", tracking_control_received},
 		        {"haptics_received", haptics_received},
 		        {"refresh_rate_changes", refresh_rate_changes},
+		        {"frame_synthesis", {{"frames", aux_frames}, {"errors", aux_errors}, {"bytes", aux_bytes}}},
 		        {"packets", packets},
 		        {"exit_reason", exit_reason},
 		};
@@ -371,6 +380,7 @@ class virtual_headset
 		                .bitrate_bps = 50'000'000,
 		                .mirror_gamepad = false,
 		                .enabled_body_parts = (uint32_t(from_headset::body_part_mask::max) - 1),
+		                .frame_synthesis = opt.frame_synthesis,
 		        },
 		        .hand_tracking = opt.hand_tracking,
 		        .eye_gaze = opt.eye_gaze,
@@ -381,6 +391,9 @@ class virtual_headset
 		        .body_tracking = parse_body(opt.body),
 		        .num_generic_trackers = opt.generic_trackers,
 		        .bit_depth = 8,
+		        .frame_synthesis_format = opt.frame_synthesis ? wivrn::frame_synthesis::format_hash() : 0,
+		        .frame_synthesis_motion_vector_width = opt.motion_vector_size[0],
+		        .frame_synthesis_motion_vector_height = opt.motion_vector_size[1],
 		        .system_name = opt.name,
 		        .language = "en",
 		        .country = "US",
@@ -710,6 +723,50 @@ class virtual_headset
 			control.send(from_headset::user_presence_changed{.present = true, .change_time = now()});
 	}
 
+	// Shards of the frames being received, kept to extract the frame synthesis data
+	std::map<std::pair<uint64_t, uint8_t>, std::map<uint16_t, std::vector<uint8_t>>> pending_shards;
+
+	// Extract and check the auxiliary data of a complete frame, as the client does
+	// (shard_accumulator): a shard starting with a start code begins a NAL unit.
+	void on_frame_complete(std::pair<uint64_t, uint8_t> key)
+	{
+		auto node = pending_shards.extract(key);
+		if (node.empty() or not stats.video or key.second >= stats.video->codec.size())
+			return;
+		const auto & shards = node.mapped();
+		if (shards.rbegin()->first + 1 != shards.size())
+			return; // lost shards
+		auto codec = stats.video->codec[key.second];
+		if (not wivrn::frame_synthesis::supports_sei(codec))
+			return;
+
+		wivrn::frame_synthesis::sei_reassembler aux(codec);
+		bool in_aux = false;
+		for (const auto & [index, payload]: shards)
+		{
+			if (wivrn::frame_synthesis::starts_with_start_code(payload))
+				in_aux = wivrn::frame_synthesis::is_aux_sei_start(codec, payload);
+			if (in_aux)
+				aux.push(payload);
+		}
+		if (not aux.has_data())
+			return;
+		auto blob = aux.finish();
+		try
+		{
+			if (not blob)
+				throw std::runtime_error("incomplete");
+			wivrn::frame_synthesis::parse(*blob);
+			++stats.aux_frames;
+			stats.aux_bytes += blob->size();
+		}
+		catch (std::exception & e)
+		{
+			if (stats.aux_errors++ == 0)
+				log(std::format("invalid frame synthesis data in frame {}: {}", key.first, e.what()));
+		}
+	}
+
 	void on_shard(to_headset::video_stream_data_shard && shard)
 	{
 		++stats.video_shards;
@@ -718,6 +775,15 @@ class virtual_headset
 		auto key = std::make_pair(shard.frame_idx, shard.stream_item_idx);
 		if (shard.view_info)
 			display_times[key] = shard.view_info->display_time;
+
+		if (opt.frame_synthesis)
+		{
+			pending_shards[key][shard.shard_idx].assign(shard.payload.begin(), shard.payload.end());
+			if (shard.timing_info)
+				on_frame_complete(key);
+			while (pending_shards.size() > 64)
+				pending_shards.erase(pending_shards.begin());
+		}
 
 		if (shard.timing_info)
 		{
@@ -942,6 +1008,8 @@ int main(int argc, char * argv[])
 	app.add_option("--face", opt.face, "face tracking: none, android, fb2, htc")->capture_default_str();
 	app.add_option("--body", opt.body, "body tracking: none, fb, meta, bd, htc")->capture_default_str();
 	app.add_option("--generic-trackers", opt.generic_trackers, "number of generic trackers (htc body tracking)")->capture_default_str();
+	app.add_option("--frame-synthesis", opt.frame_synthesis, "receive the XR_EXT_frame_synthesis data of the application")->capture_default_str();
+	app.add_option("--motion-vector-size", opt.motion_vector_size, "recommended XR_EXT_frame_synthesis motion vector size (0 0: the colour size)")->expected(2)->capture_default_str();
 	app.add_option("--controllers", opt.controllers, "controller profile: none, simple, touch, touch-plus, touch-pro, hand, index")->capture_default_str();
 	app.add_flag("--motion", opt.motion, "move the head slowly instead of keeping it still");
 	app.add_option("--duration", opt.duration, "exit after this many seconds (0: until the server disconnects)")->capture_default_str();

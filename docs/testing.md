@@ -41,8 +41,11 @@ runs them. The unit tests are not part of the tiers.
   connected; this program connects with the real protocol (unencrypted), reports a configurable
   set of features (controllers, hand and eye tracking, face and body tracking, refresh rates,
   codecs), answers time synchronisation, sends synthetic tracking at the display rate, sends
-  feedback for the video frames and discards them. Its statistics (frames, haptics, refresh
-  rate changes...) are written to a JSON file.
+  feedback for the video frames and discards them. With `--frame-synthesis true` it asks for the
+  XR_EXT_frame_synthesis data of the application (`--motion-vector-size` sets the recommended
+  motion vector size the runtime advertises) and extracts and parses it from the video stream
+  as the client does. Its statistics (frames, frame synthesis data, haptics, refresh rate
+  changes...) are written to a JSON file.
 - `wivrn-xr-tests` ([`test/xr`](../test/xr)): OpenXR tests for the extensions the CTS does not
   test, end to end: they compare what the application gets (hand joints, face weights, body
   joints, gaze, refresh rates) with what the virtual headset sends, and check that what the
@@ -85,8 +88,9 @@ headset log and statistics, the CTS console output and JUnit report, and `result
 GitHub Actions the summary is added to the job summary and the directory is uploaded.
 
 The run fails when a test fails that is not listed in `[[expected_failures]]`, when the server
-crashes or exits, when the headset received fewer video frames than `min_video_frames`, or when
-the runtime advertises an extension that has no entry in `[extensions]`.
+crashes or exits, when the headset received fewer video frames than `min_video_frames` or fewer
+frames with frame synthesis data than `min_aux_frames`, when the frame synthesis data it received
+is invalid, or when the runtime advertises an extension that has no entry in `[extensions]`.
 
 #### `ci` tier locally
 

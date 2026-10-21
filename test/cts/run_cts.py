@@ -721,6 +721,20 @@ def run_one(args, suites, tier_name, tier, run, out: Path, cts: Path, build: Pat
                 f"the headset received {frames} video frames, expected at least {min_frames}"
             )
 
+    # XR_EXT_frame_synthesis data received by the virtual headset (--frame-synthesis)
+    if result.headset and "frame_synthesis" in result.headset:
+        aux = result.headset["frame_synthesis"]
+        if aux.get("errors", 0):
+            result.errors.append(
+                f"the headset received invalid frame synthesis data in {aux['errors']} frames"
+            )
+        min_aux = run.get("min_aux_frames", tier.get("min_aux_frames", 0))
+        if aux.get("frames", 0) < min_aux:
+            result.errors.append(
+                f"the headset received frame synthesis data for {aux.get('frames', 0)} frames, "
+                f"expected at least {min_aux}"
+            )
+
     classify(result, suites, tier_name)
     result.duration = time.monotonic() - start
     (run_dir / "result.json").write_text(json.dumps(result.__dict__, indent=2, default=str))
