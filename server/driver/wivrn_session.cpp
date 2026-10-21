@@ -443,12 +443,13 @@ void wivrn_session::resume_session()
 	send_control(to_headset::feature_control{to_headset::feature_control::hid_input, bool(uinput_handler)});
 
 	{
-		float target_fps = default_fps();
+		const auto [refresh_rate, fps_divider] = default_refresh_rate();
+		float target_fps = refresh_rate / fps_divider;
 		auto current_fps = compositor.get_framerate();
+		compositor.set_framerate(refresh_rate, fps_divider);
 
 		if (target_fps != current_fps)
 		{
-			compositor.set_framerate(target_fps);
 			push_event(
 			        {
 			                .display = {
@@ -485,12 +486,18 @@ bool wivrn_session::connected()
 	return connection->is_active();
 }
 
-float wivrn_session::default_fps()
+std::pair<float, uint32_t> wivrn_session::default_refresh_rate()
 {
 	auto s = settings.lock();
 	if (s->preferred_refresh_rate)
-		return s->preferred_refresh_rate / s->fps_divider;
-	return headset_info.available_refresh_rates.back();
+		return {s->preferred_refresh_rate, s->fps_divider};
+	return {headset_info.available_refresh_rates.back(), 1};
+}
+
+float wivrn_session::default_fps()
+{
+	const auto [refresh_rate, fps_divider] = default_refresh_rate();
+	return refresh_rate / fps_divider;
 }
 
 void wivrn_session::add_tracking_request(device_id device, int64_t at_ns, int64_t produced_ns, int64_t now)
@@ -516,7 +523,7 @@ void wivrn_session::operator()(const from_headset::settings_changed & settings)
 		compositor.set_bitrate(settings.bitrate_bps);
 
 	if (settings.preferred_refresh_rate != 0)
-		compositor.set_framerate(settings.preferred_refresh_rate / settings.fps_divider);
+		compositor.set_framerate(settings.preferred_refresh_rate, settings.fps_divider);
 
 	if (not settings.mirror_gamepad and uinput_handler)
 		uinput_handler->destroy_gamepad();
@@ -873,7 +880,7 @@ void wivrn_session::operator()(from_headset::user_presence_changed && event)
 void wivrn_session::operator()(from_headset::refresh_rate_changed && event)
 {
 	auto locked = settings.lock();
-	compositor.set_framerate(event.to / locked->fps_divider);
+	compositor.set_framerate(event.to, locked->fps_divider);
 	push_event(
 	        {
 	                .display = {
