@@ -30,6 +30,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <random>
 #include <vector>
 
@@ -195,13 +196,55 @@ static void test_codec(const sample_images & s)
 	}
 }
 
-static std::vector<uint8_t> make_blob(const sample_images & s, depth_format df)
+static std::vector<uint8_t> make_blob(const sample_images & s, depth_format df, const std::function<void(view_header &)> & modify = {})
 {
 	auto h = make_header(s, df);
+	if (modify)
+		modify(h);
 	std::vector<uint8_t> motion, depth;
 	h.motion.compressed_size = compress({s.w, s.h, 2, 2, 4}, s.motion, h.motion.filter_mode, h.motion.compression_mode, 1, motion);
 	h.depth.compressed_size = compress({s.w, s.h, 1, uint32_t(bytes_per_pixel(df)), 4}, s.depth, h.depth.filter_mode, h.depth.compression_mode, 1, depth);
 	return serialize(h, motion, depth);
+}
+
+// Values that parse() must reject. Built with the same flags as the server and client
+// (-ffast-math), where std::isnan / std::isfinite and NaN comparisons cannot be relied on.
+static void test_invalid_values(const sample_images & s)
+{
+	const float nan = std::bit_cast<float>(0x7fc00000u);
+	const float inf = std::bit_cast<float>(0x7f800000u);
+	const std::pair<const char *, std::function<void(view_header &)>> cases[] = {
+	        {"NaN min depth", [&](view_header & h) { h.min_depth = nan; }},
+	        {"NaN max depth", [&](view_header & h) { h.max_depth = nan; }},
+	        {"NaN near", [&](view_header & h) { h.near_z = nan; }},
+	        {"NaN far", [&](view_header & h) { h.far_z = nan; }},
+	        {"NaN motion vector scale", [&](view_header & h) { h.motion_vector_scale.y = nan; }},
+	        {"infinite motion vector offset", [&](view_header & h) { h.motion_vector_offset.x = inf; }},
+	        {"NaN delta pose orientation", [&](view_header & h) { h.app_space_delta_pose.orientation.w = nan; }},
+	        {"infinite delta pose position", [&](view_header & h) { h.app_space_delta_pose.position.z = -inf; }},
+	        {"NaN layer pose", [&](view_header & h) { h.layer_space_pose.position.x = nan; }},
+	};
+	for (const auto & [name, modify]: cases)
+	{
+		auto blob = make_blob(s, depth_format::r32_sfloat, modify);
+		bool rejected = false;
+		try
+		{
+			parse(blob);
+		}
+		catch (parse_error &)
+		{
+			rejected = true;
+		}
+		if (not rejected)
+		{
+			fprintf(stderr, "%s:%d: %s accepted\n", __FILE__, __LINE__, name);
+			++failures;
+		}
+	}
+
+	// Infinite near or far planes are valid
+	parse(make_blob(s, depth_format::r32_sfloat, [&](view_header & h) { h.near_z = inf; h.far_z = 0.1; }));
 }
 
 static void test_frame(const sample_images & s)
@@ -336,6 +379,7 @@ int main(int argc, char ** argv)
 		printf("%s images %ux%u\n", noisy ? "noisy" : "smooth", s.w, s.h);
 		test_codec(s);
 		test_frame(s);
+		test_invalid_values(s);
 		test_sei(s, video_codec::h264);
 		test_sei(s, video_codec::h265);
 	}

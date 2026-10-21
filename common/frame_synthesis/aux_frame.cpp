@@ -20,6 +20,7 @@
 
 #include "wivrn_serialization.h"
 
+#include <bit>
 #include <cmath>
 #include <format>
 #include <magic_enum.hpp>
@@ -123,15 +124,28 @@ void check_image(const image_info & info, size_t bpp, const char * name)
 		throw parse_error(std::format("invalid {} payload size {}", name, info.compressed_size));
 }
 
+// The server and client are built with -ffast-math: the compiler assumes there is no NaN
+// or infinity, std::isfinite / std::isnan and NaN-rejecting comparisons can be folded away.
+// The header comes from the network, check the bits instead.
+bool is_nan(float f)
+{
+	return (std::bit_cast<uint32_t>(f) & 0x7fffffff) > 0x7f800000;
+}
+
+bool finite(float f)
+{
+	return (std::bit_cast<uint32_t>(f) & 0x7f800000) != 0x7f800000;
+}
+
 bool finite(const XrVector3f & v)
 {
-	return std::isfinite(v.x) and std::isfinite(v.y) and std::isfinite(v.z);
+	return finite(v.x) and finite(v.y) and finite(v.z);
 }
 
 bool finite(const XrPosef & p)
 {
-	return std::isfinite(p.orientation.x) and std::isfinite(p.orientation.y) and
-	       std::isfinite(p.orientation.z) and std::isfinite(p.orientation.w) and finite(p.position);
+	return finite(p.orientation.x) and finite(p.orientation.y) and
+	       finite(p.orientation.z) and finite(p.orientation.w) and finite(p.position);
 }
 } // namespace
 
@@ -162,11 +176,12 @@ parsed_view parse(std::span<const uint8_t> data)
 	check_image(h.motion, bytes_per_pixel(h.motion_encoding), "motion");
 	check_image(h.depth, bytes_per_pixel(h.depth_encoding), "depth");
 
-	if (not(h.min_depth >= 0 and h.max_depth <= 1 and h.min_depth <= h.max_depth))
+	if (not finite(h.min_depth) or not finite(h.max_depth) or
+	    not(h.min_depth >= 0 and h.max_depth <= 1 and h.min_depth <= h.max_depth))
 		throw parse_error(std::format("invalid depth range [{}, {}]", h.min_depth, h.max_depth));
 
 	// Infinity is allowed, NaN is not
-	if (not(h.near_z > 0 and h.far_z > 0) or h.near_z == h.far_z)
+	if (is_nan(h.near_z) or is_nan(h.far_z) or not(h.near_z > 0 and h.far_z > 0) or h.near_z == h.far_z)
 		throw parse_error(std::format("invalid near/far {}/{}", h.near_z, h.far_z));
 
 	if (not finite(h.motion_vector_scale) or not finite(h.motion_vector_offset) or
