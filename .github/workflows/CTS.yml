@@ -29,12 +29,20 @@ jobs:
         packages: ccache ninja-build libvulkan-dev glslang-tools spirv-tools libwayland-dev libxrandr-dev ${{ env.SERVER_DEPS }} ${{ env.CTS_DEPS }} ${{ env.RUNTIME_DEPS }}
 
     # Ubuntu's lavapipe (Mesa 26.0) lacks VK_KHR_external_semaphore_fd and VK_KHR_external_fence_fd,
-    # which Monado requires to share images with applications: use a newer Mesa
+    # which Monado requires for XR_KHR_vulkan_enable: prefer a newer Mesa. The PPA is sometimes
+    # unavailable; the tests still run with Ubuntu's Mesa (see the expected failures in suites.toml).
     - name: Mesa
       run: |
-        sudo add-apt-repository -y ppa:kisak/kisak-mesa
-        for i in 1 2 3; do sudo apt-get update -q && sudo apt-get install -y -q mesa-vulkan-drivers && break; sleep 30; done
-        dpkg -l mesa-vulkan-drivers | tail -1
+        sudo add-apt-repository -y ppa:kisak/kisak-mesa || true
+        for i in 1 2 3; do
+          sudo apt-get update -q || true
+          sudo apt-get install -y -q mesa-vulkan-drivers
+          dpkg -l mesa-vulkan-drivers | grep -q kisak && break
+          echo "kisak Mesa not available yet, retrying"; sleep 60
+        done
+        version=$(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)
+        echo "Mesa $version"
+        case "$version" in *kisak*) ;; *) echo "::warning::kisak Mesa PPA unavailable, using Ubuntu's Mesa $version" ;; esac
 
     - name: ccache
       uses: hendrikmuhs/ccache-action@v1.2.23
