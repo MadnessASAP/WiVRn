@@ -27,6 +27,7 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -627,7 +628,12 @@ def run_one(args, suites, tier_name, tier, run, out: Path, cts: Path, build: Pat
                 "--reporter",
                 f"console::out={run_dir / 'cts.log'}::colour-mode=none",
             ]
+        if args.wrapper:
+            cts_cmd = shlex.split(args.wrapper) + cts_cmd
         cts_env = dict(env.env, XR_RUNTIME_JSON=str(runtime_manifest(build)))
+        for item in args.env:
+            key, _, value = item.partition("=")
+            cts_env[key] = value
         (run_dir / "cts.cmd").write_text(" ".join(cts_cmd) + "\n")
         log(f"{run['name']}: {' '.join(cts_cmd[1:])}")
         timeout = run.get("timeout", tier.get("timeout", 3600))
@@ -821,6 +827,15 @@ def main() -> int:
     p.add_argument("--port", type=int, default=19757, help="server port (default 19757)")
     p.add_argument("--package", help="client package on the headset (headset tier)")
     p.add_argument("--allow-wifi", action="store_true", help="allow a WiFi route to the headset")
+    p.add_argument(
+        "--wrapper", help='command prefix for the tests, e.g. "gdb -batch -ex run -ex bt --args"'
+    )
+    p.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        help="KEY=VALUE for the tests (repeatable), e.g. __GLX_VENDOR_LIBRARY_NAME=nvidia",
+    )
     p.add_argument("--strict", action="store_true", help="unexpected passes fail the run")
     p.add_argument("--no-coverage", action="store_true", help="skip the extension coverage check")
     p.add_argument("--list", action="store_true", help="print the runs and exit")

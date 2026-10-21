@@ -114,6 +114,18 @@ name = "opengl"
 plugin = "opengl"
 tests = "~[interactive]"
 
+# Interactive composition tests, skipped after a timeout instead of waiting for a human: they
+# still submit every layer type, so runtime errors and crashes are caught
+[[tiers.gpu.runs]]
+name = "composition"
+tests = "[composition]"
+cts_args = ["--autoSkipTimeout", "500"]
+
+[[tiers.gpu.runs]]
+name = "wivrn-quest"
+runner = "wivrn"
+profile = "quest"
+
 [tiers.headset]
 description = "A real headset over ADB running the client built from this tree"
 headset = "device"

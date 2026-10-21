@@ -57,6 +57,8 @@ Useful options of `run`:
   `/usr/share/vulkan/icd.d/lvp_icd.x86_64.json` to run the `ci` tier without a GPU.
 - `--port`: server port (19757 by default, so it does not collide with an installed WiVRn).
 - `--strict`: unexpected passes fail the run.
+- `--env KEY=VALUE`: environment for the tests, e.g. `__GLX_VENDOR_LIBRARY_NAME=nvidia` (see below).
+- `--wrapper CMD`: run the tests under a command, e.g. `--wrapper "gdb -batch -ex run -ex bt --args"`.
 
 Results go to `cts-results/<tier>-<time>/`: `summary.md`, and per run the server log, the
 headset log and statistics, the CTS console output and JUnit report, and `result.json`. In
@@ -81,6 +83,14 @@ debug build). The headset must be reachable over Ethernet from the host (pass `-
 otherwise), awake or wakeable over ADB. The script starts the client with a `wivrn://` URI on
 the test port, so the headset does not need to be paired (the test server runs with
 `--no-encrypt`), and puts it back to sleep at the end.
+
+### Hybrid graphics
+
+OpenGL applications share images with the server, so their context must be on the GPU the server
+renders on. On a laptop or desktop with two GPUs, the desktop's OpenGL may run on the other one,
+and the `opengl` run crashes in the GL driver while importing the server's images. Select the
+server's GPU for the tests, for NVIDIA with `--env __GLX_VENDOR_LIBRARY_NAME=nvidia`, for Mesa
+with `--env DRI_PRIME=1`.
 
 ## Extension coverage
 
