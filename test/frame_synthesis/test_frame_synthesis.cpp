@@ -25,6 +25,7 @@
 #include "frame_synthesis/aux_codec.h"
 #include "frame_synthesis/aux_frame.h"
 
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -214,7 +215,7 @@ static void test_frame(const sample_images & s)
 		CHECK(parsed.header.app_display_time == 987000000);
 		CHECK(parsed.header.previous_app_display_time == 975888889);
 		CHECK(parsed.header.previous_frame_index == 1233);
-		CHECK(std::isinf(parsed.header.far_z));
+		CHECK(std::bit_cast<uint32_t>(parsed.header.far_z) == 0x7f800000); // +infinity, also under -ffast-math
 		CHECK(parsed.header.depth_encoding == df);
 
 		std::vector<uint8_t> motion(parsed.header.motion.uncompressed_size);

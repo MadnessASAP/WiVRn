@@ -1,5 +1,13 @@
 # Test tools, see docs/testing.md
 
+# Unit tests, run with ctest
+if (WIVRN_BUILD_SERVER)
+	add_executable(test-frame-synthesis frame_synthesis/test_frame_synthesis.cpp)
+	target_link_libraries(test-frame-synthesis PRIVATE wivrn-frame-synthesis wivrn-common xrt-external-openxr)
+	add_test(NAME frame-synthesis-codec COMMAND test-frame-synthesis)
+endif()
+
+# OpenXR tests against the server (driven by cts/run_cts.py)
 if (WIVRN_BUILD_SERVER)
 	add_executable(wivrn-virtual-headset virtual_headset/main.cpp)
 	target_link_libraries(wivrn-virtual-headset PRIVATE xrt-external-openxr wivrn-common CLI11::CLI11 nlohmann_json::nlohmann_json)

@@ -342,10 +342,11 @@ endif()
 add_subdirectory(tools)
 
 if (WIVRN_BUILD_TEST)
+    enable_testing()
     add_subdirectory(test)
 endif()
 
-foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissector wivrnctl wivrn-virtual-headset wivrn-xr-tests)
+foreach(TARGET_NAME wivrn wivrn-server wivrn-dashboard wivrn-common wivrn-dissector wivrnctl wivrn-virtual-headset wivrn-xr-tests test-frame-synthesis)
     if(TARGET ${TARGET_NAME})
         target_compile_options(${TARGET_NAME} PRIVATE
             -fdiagnostics-color -Wall -Wextra -pedantic

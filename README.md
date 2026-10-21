@@ -135,7 +135,7 @@ The same overrides should work for other VR applications distributed as Flatpaks
 
 See [building](docs/building.md) for building the [dashboard](docs/building.md#dashboard), [server (PC)](docs/building.md#server-pc), and [client (headset)](docs/building.md#client-headset)
 
-See [testing](docs/testing.md) for running the OpenXR conformance tests against the server.
+See [testing](docs/testing.md) for the unit tests and for running the OpenXR conformance tests against the server.
 
 
 # Configuration

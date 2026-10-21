@@ -286,9 +286,6 @@ if (WIVRN_BUILD_SERVER)
 	target_compile_definitions(wivrn-server PRIVATE JSON_DIAGNOSTICS=1)
 
 	if (WIVRN_BUILD_TEST)
-		add_executable(test-frame-synthesis ${CMAKE_SOURCE_DIR}/common/frame_synthesis/test_frame_synthesis.cpp)
-		target_link_libraries(test-frame-synthesis wivrn-frame-synthesis wivrn-common xrt-external-openxr)
-
 		add_executable(wivrn-frame-synthesis-dump ${CMAKE_SOURCE_DIR}/common/frame_synthesis/dump_tool.cpp)
 		target_link_libraries(wivrn-frame-synthesis-dump wivrn-frame-synthesis wivrn-common xrt-external-openxr)
 	endif()

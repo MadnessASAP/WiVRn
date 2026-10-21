@@ -1,4 +1,24 @@
-# Testing with the OpenXR conformance tests
+# Testing
+
+The tests are in [`test/`](../test), built with `-DWIVRN_BUILD_TEST=ON`:
+
+- unit tests of WiVRn's own code, registered with CTest (see [Unit tests](#unit-tests));
+- the official [OpenXR conformance tests](#openxr-conformance-tests) and WiVRn's own OpenXR
+  tests, run against the server by `test/cts/run_cts.py`.
+
+## Unit tests
+
+| Test | Source | Checks |
+|---|---|---|
+| `frame-synthesis-codec` | [`test/frame_synthesis`](../test/frame_synthesis) | round trip of the frame synthesis auxiliary data (motion vectors and depth compression, SEI framing) |
+
+```bash
+cmake --preset server -B build-server -DWIVRN_BUILD_TEST=ON
+cmake --build build-server
+ctest --test-dir build-server --output-on-failure
+```
+
+## OpenXR conformance tests
 
 The server is tested with the [OpenXR conformance test suite](https://github.com/KhronosGroup/OpenXR-CTS)
 (CTS) and with WiVRn's own OpenXR tests for the extensions the CTS does not cover. The tests
@@ -12,9 +32,9 @@ are grouped in three tiers, by what they need:
 
 The tiers, the tests they run, the known failures and the extension coverage are in
 [`test/cts/suites.toml`](../test/cts/suites.toml); [`test/cts/run_cts.py`](../test/cts/run_cts.py)
-runs them.
+runs them. The unit tests are not part of the tiers.
 
-## Components
+### Components
 
 - `wivrn-virtual-headset` ([`test/virtual_headset`](../test/virtual_headset)): a headless
   stand-in for the headset. The server only creates its OpenXR system once a headset is
@@ -34,7 +54,7 @@ runs them.
 
 Both programs are built with `-DWIVRN_BUILD_TEST=ON`.
 
-## Running the tests
+### Running the tests
 
 ```bash
 # Server and test programs
@@ -68,7 +88,7 @@ The run fails when a test fails that is not listed in `[[expected_failures]]`, w
 crashes or exits, when the headset received fewer video frames than `min_video_frames`, or when
 the runtime advertises an extension that has no entry in `[extensions]`.
 
-### `ci` tier locally
+#### `ci` tier locally
 
 lavapipe needs Mesa 26.2 or newer (`VK_KHR_external_semaphore_fd` and `VK_KHR_external_fence_fd`,
 which Monado requires to share images with applications); `test/cts/build_lavapipe.sh PREFIX`
@@ -80,7 +100,7 @@ test/cts/run_cts.py run ci --build-dir build-server --cts openxr-cts/build \
     --vk-driver lavapipe
 ```
 
-### `headset` tier
+#### `headset` tier
 
 The client on the headset must be built from the same tree (the protocol versions must match)
 and installed; pass its package with `--package` (`org.meumeu.wivrn.local` by default for a
@@ -92,7 +112,7 @@ WiVRn service (`systemctl --user stop wivrn`) during the run, or open another po
 the test port, so the headset does not need to be paired (the test server runs with
 `--no-encrypt`), and puts it back to sleep at the end.
 
-### Hybrid graphics
+#### Hybrid graphics
 
 OpenGL applications share images with the server, so their context must be on the GPU the server
 renders on. On a laptop or desktop with two GPUs, the desktop's OpenGL may run on the other one,
@@ -100,14 +120,14 @@ and the `opengl` run crashes in the GL driver while importing the server's image
 server's GPU for the tests, for NVIDIA with `--env __GLX_VENDOR_LIBRARY_NAME=nvidia`, for Mesa
 with `--env DRI_PRIME=1`.
 
-## Extension coverage
+### Extension coverage
 
 Every extension the runtime advertises must have an entry in `[extensions]` with the tests that
 exercise it. `run_cts.py extensions --build-dir build-server` lists the advertised extensions and
 their tests, and each tier run ends with a table of extensions and outcomes. When a new
 extension is enabled (in Monado or WiVRn), add a CTS test name or a `wivrn-xr-tests` test for it.
 
-## Adding a test to `wivrn-xr-tests`
+### Adding a test to `wivrn-xr-tests`
 
 ```cpp
 TEST("WiVRn.XR_FOO_bar", XR_FOO_BAR_EXTENSION_NAME)
@@ -124,7 +144,7 @@ The test is skipped when the runtime does not advertise the listed extensions. E
 come from the `features` (the virtual headset options) and from the data the virtual headset
 sends (see the comments in both programs).
 
-## Known limitations
+### Known limitations
 
 - XR_EXT_conformance_automation is not implemented by Monado, so the interactive CTS tests (which
   wait for a human to press buttons) are not run.
