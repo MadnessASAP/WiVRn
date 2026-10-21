@@ -129,6 +129,10 @@ profile = "quest"
 [tiers.headset]
 description = "A real headset over ADB running the client built from this tree"
 headset = "device"
+# The headset must reach the server through the host firewall, which usually only allows WiVRn's
+# port: stop an installed WiVRn service during the run, or open another port and pass --port
+port = 9757
+settle = 5
 package = "org.meumeu.wivrn.local"
 profile = "quest"
 plugin = "vulkan2"

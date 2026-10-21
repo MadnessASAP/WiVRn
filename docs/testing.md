@@ -80,7 +80,10 @@ test/cts/run_cts.py run ci --build-dir build-server --cts openxr-cts/build \
 The client on the headset must be built from the same tree (the protocol versions must match)
 and installed; pass its package with `--package` (`org.meumeu.wivrn.local` by default for a
 debug build). The headset must be reachable over Ethernet from the host (pass `--allow-wifi`
-otherwise), awake or wakeable over ADB. The script starts the client with a `wivrn://` URI on
+otherwise), awake or wakeable over ADB. The headset connects to the test server, so the host
+firewall must let it through: the tier uses WiVRn's port 9757 (TCP and UDP), stop an installed
+WiVRn service (`systemctl --user stop wivrn`) during the run, or open another port and pass
+`--port`. The script starts the client with a `wivrn://` URI on
 the test port, so the headset does not need to be paired (the test server runs with
 `--no-encrypt`), and puts it back to sleep at the end.
 

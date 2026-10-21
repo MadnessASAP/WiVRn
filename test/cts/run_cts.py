@@ -552,6 +552,7 @@ def run_one(args, suites, tier_name, tier, run, out: Path, cts: Path, build: Pat
     run_dir.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
 
+    port = args.port or run.get("port", tier.get("port", 19757))
     env = Environment(out)
     server = None
     headset: Headset | None = None
@@ -564,7 +565,7 @@ def run_one(args, suites, tier_name, tier, run, out: Path, cts: Path, build: Pat
         config = dict(tier.get("server_config", {}))
         config.update(run.get("server_config", {}))
         config.setdefault("publish-service", "none")
-        config["port"] = args.port
+        config["port"] = port
         (run_dir / "server.json").write_text(json.dumps(config, indent=2))
 
         server_cmd = [
@@ -588,7 +589,7 @@ def run_one(args, suites, tier_name, tier, run, out: Path, cts: Path, build: Pat
             headset = VirtualHeadset(build / "test/wivrn-virtual-headset", headset_args)
         else:
             headset = DeviceHeadset(args.package or tier.get("package"), args.allow_wifi)
-        headset.start(env, args.port, run_dir)
+        headset.start(env, port, run_dir)
         if not headset.wait_connected(server_log):
             raise RuntimeError("the headset did not connect")
         # Let the clock offset estimation and the tracking history settle, as with a headset
@@ -824,7 +825,7 @@ def main() -> int:
     p.add_argument("--tests", help="override the test selection (Catch2 test spec)")
     p.add_argument("--vk-driver", help="Vulkan ICD manifest, e.g. Mesa lavapipe")
     p.add_argument("--settle", type=float, help="seconds between connection and tests")
-    p.add_argument("--port", type=int, default=19757, help="server port (default 19757)")
+    p.add_argument("--port", type=int, help="server port (default: the tier's, else 19757)")
     p.add_argument("--package", help="client package on the headset (headset tier)")
     p.add_argument("--allow-wifi", action="store_true", help="allow a WiFi route to the headset")
     p.add_argument(
